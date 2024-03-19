@@ -256,6 +256,40 @@ namespace RPG
             }
 
         }
+        public async Task SetDb(ulong steamID, string columnName, int value)
+        {
+            if (isSQLite)
+            {
+                try
+                {
+                    await connLocal.OpenAsync();
+                    var sql = $@"UPDATE {table} SET {columnName} = @Value WHERE steamid = @SteamID;";
+                    await connLocal.ExecuteAsync(sql, new { SteamID = steamID, Value = value });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in SetDb: {ex.Message}");
+                }
+            }
+            else
+            {
+                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
+                using (var conn = new MySqlConnection(connectionString))
+                {
+                    try
+                    {
+                        await conn.OpenAsync();
+                        var sql = $@"UPDATE `{table}` SET {columnName} = @Value WHERE `steamid` = @SteamID;";
+                        await conn.ExecuteAsync(sql, new { SteamID = steamID, Value = value });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error in SetDb: {ex.Message}");
+                    }
+                }
+            }
+
+        }
         public async Task UpdateTxtDb(ulong steamID, string columnName, string newValue)
         {
             if (isSQLite)
@@ -454,7 +488,7 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0";
+        public override string ModuleVersion => "1.0 - 19/03/2024-a";
         public override string ModuleAuthor => "Franc1sco Franug";
         public override void Load(bool hotReload)
         {
@@ -545,7 +579,7 @@ namespace RPG
                 {
                     storage?.UpdateDb(steamid, "level", 1);
                     storage?.UpdateDb(steamid, "skillavailable", 1);
-                    storage?.UpdateDb(steamid, "pointscalc", 0);
+                    storage?.SetDb(steamid, "pointscalc", 0);
                     if (storage != null)
                     {
                         int level = storage.GetPlayerIntAttribute(steamid, "level").GetAwaiter().GetResult();
