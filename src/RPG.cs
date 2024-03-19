@@ -35,6 +35,7 @@ public class ConfigGen : BasePluginConfig
 
     [JsonPropertyName("HPIncreasePerLevel")] public int HPIncreasePerLevel { get; set; } = 25;
     [JsonPropertyName("SpeedIncreasePerLevel")] public float SpeedIncreasePerLevel { get; set; } = 0.05f;
+    [JsonPropertyName("JumpIncreasePerLevel")] public float JumpIncreasePerLevel { get; set; } = 11.25f;
 
 }
 
@@ -48,6 +49,10 @@ namespace RPG
         public int Skill4Points { get; set; }
         public int Skill5Points { get; set; }
         public int AvailablePoints { get; set; }
+        public int Level { get; set; }
+        public int PointsCalc { get; set; }
+
+
 
         public int GetSkillPointsByColumnName(string columnName)
         {
@@ -58,6 +63,16 @@ namespace RPG
                 case "skillthree": return Skill3Points;
                 case "skillfour": return Skill4Points;
                 case "skillfive": return Skill5Points;
+                default: throw new ArgumentException("Invalid column name");
+            }
+        }
+
+        public int GetStatsByColumnName(string columnName)
+        {
+            switch (columnName)
+            {
+                case "level": return Level;
+                case "pointscalc": return PointsCalc;
                 default: throw new ArgumentException("Invalid column name");
             }
         }
@@ -514,8 +529,10 @@ namespace RPG
 
             AddCommand("skills", "Opens menu to upgrade skills", OnSkillsCommand);
             AddCommand("showskills", "show skills in chat", OnShowskillsCommand);
+            AddCommand("showstats", "show skills in chat", OnShowstatsCommand);
 
-            
+
+
             if (hotReload)
             {
                 AddTimer(5.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
@@ -659,7 +676,7 @@ namespace RPG
                     Skill3Points = 0,
                     Skill4Points = 0,
                     Skill5Points = 0,
-                    AvailablePoints = 0
+                    AvailablePoints = 0,
                 };
             }
         }
@@ -691,6 +708,35 @@ namespace RPG
                 player.PrintToChat($"{ChatColors.Red}Error: Could not retrieve your skills. Please try again.");
             }
         } // for debugging, to see if dictionary contains the right values
+
+        private void OnShowstatsCommand(CCSPlayerController? player, CommandInfo commandInfo)
+        {
+            if (player == null || !player.IsValid || player.IsBot)
+            {
+                return; // Check if the player object is valid and not a bot
+            }
+
+            var steamid = player.SteamID;
+            if (storage != null)
+            {
+                int level = storage.GetPlayerIntAttribute(steamid, "level").GetAwaiter().GetResult();
+                int pointscalc = storage.GetPlayerIntAttribute(steamid, "pointscalc").GetAwaiter().GetResult();
+                // Attempt to retrieve the player's skills from the cache
+                if (playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
+                {
+                    // If found, print each stat and its xp
+                    player.PrintToChat($"{ChatColors.Green}[Skills]{ChatColors.Gold} Your current stats:");
+                    player.PrintToChat($" {ChatColors.Gold} Your current lvl is: {level}");
+                    player.PrintToChat($" {ChatColors.Gold} Your current xp is: {pointscalc} / {Config.XPLevel}");
+                }
+                else
+                {
+                    // If not found in cache, you might want to load from database or display an error
+                    // This is just an error message, implement loading from DB as needed
+                    player.PrintToChat($"{ChatColors.Red}Error: Could not retrieve your skills. Please try again.");
+                }
+            }
+        }
         private async void OnSkillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
         {
             if (player == null || !player.IsValid || player.IsBot) return;
@@ -894,8 +940,8 @@ namespace RPG
                 var timer = new CounterStrikeSharp.API.Modules.Timers.Timer(balancedtimer, () =>
                 {
                     jumperPawn.AbsVelocity.Z = 180 + 2 * jumpPoints;
-                    var forwardX = Math.Cos(yaw) * Math.Cos(pitch) * (15 + (jumpPoints / 2));
-                    var forwardY = Math.Sin(yaw) * Math.Cos(pitch) * (15 + (jumpPoints / 2));
+                    var forwardX = Math.Cos(yaw) * Math.Cos(pitch) * (15 + (jumpPoints * Config.JumpIncreasePerLevel));
+                    var forwardY = Math.Sin(yaw) * Math.Cos(pitch) * (15 + (jumpPoints * Config.JumpIncreasePerLevel));
                     jumperPawn.AbsVelocity.X += (float)forwardX;
                     jumperPawn.AbsVelocity.Y += (float)forwardY;
                 });
