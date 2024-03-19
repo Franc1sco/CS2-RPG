@@ -9,6 +9,7 @@ using static Dapper.SqlMapper;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
 using CounterStrikeSharp.API.Modules.Entities;
+using CounterStrikeSharp.API.Modules.Timers;
 
 public class ConfigGen : BasePluginConfig
 {
@@ -488,7 +489,7 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 19/03/2024-a";
+        public override string ModuleVersion => "1.0 - 19/03/2024-b";
         public override string ModuleAuthor => "Franc1sco Franug";
         public override void Load(bool hotReload)
         {
@@ -509,12 +510,39 @@ namespace RPG
             RegisterEventHandler<EventPlayerHurt>(OnPlayerHurtMultiplier, HookMode.Pre);
             RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath, HookMode.Pre);
             RegisterEventHandler<EventPlayerJump>(OnPlayerJump, HookMode.Pre);
-            RegisterEventHandler<EventPlayerHurt>(OnPlayerFalldamage, HookMode.Pre);
             RegisterEventHandler<EventPlayerSpawn>(eventPlayerSpawn);
 
             AddCommand("skills", "Opens menu to upgrade skills", OnSkillsCommand);
             AddCommand("showskills", "show skills in chat", OnShowskillsCommand);
 
+            
+            if (hotReload)
+            {
+                AddTimer(5.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+            }
+            RegisterListener<Listeners.OnMapStart>(OnMapStartEvent);
+
+        }
+        private void OnMapStartEvent(string mapName)
+        {
+            AddTimer(5.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+        }
+
+        private void TimerCheckVelocity()
+        {
+            List<CCSPlayerController> players = Utilities.GetPlayers();
+
+            foreach (CCSPlayerController player in players)
+            {
+                if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive) continue;
+
+                var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                if (speedPoints >= 1)
+                {
+                    SetPlayerSpeed(player.PlayerPawn.Value, speedPoints * Config.SpeedIncreasePerLevel);
+                }
+            }
         }
         private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
         {
@@ -872,24 +900,6 @@ namespace RPG
                     jumperPawn.AbsVelocity.Y += (float)forwardY;
                 });
             }
-            return HookResult.Continue;
-        }
-        private HookResult OnPlayerFalldamage(EventPlayerHurt @event, GameEventInfo info)
-        {
-            var victim = @event.Userid;
-            var victimPawn = victim.PlayerPawn.Value;
-            var weapon = @event.Weapon;
-            var hitgroup = @event.Hitgroup;
-            var dmg = @event.DmgHealth;
-            var dmgarmor = @event.DmgArmor;
-            if (weapon == "" && hitgroup == 0 && dmgarmor == 0)
-            {
-                var healthtoadd = dmg / 2;
-                victimPawn!.Health += healthtoadd;
-            }
-
-
-
             return HookResult.Continue;
         }
 
