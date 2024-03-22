@@ -44,6 +44,11 @@ public class ConfigGen : BasePluginConfig
     [JsonPropertyName("AdrenalineIncreasePerLevel")] public float AdrenalineIncreasePerLevel { get; set; } = 0.15f;
     [JsonPropertyName("AdrenalineDuration")] public float AdrenalineDuration { get; set; } = 0.5f;
     [JsonPropertyName("AdrenalineOnlyOnHit")] public bool AdrenalineOnlyOnHit { get; set; } = false;
+    [JsonPropertyName("NormalKillXP")] public int NormalKillXP { get; set; } = 200;
+    [JsonPropertyName("HSKillXP")] public int HSKillXP { get; set; } = 250;
+    [JsonPropertyName("KnifeKillXP")] public int KnifeKillXP { get; set; } = 300;
+    [JsonPropertyName("GrenadeKillXP")] public int GrenadeKillXP { get; set; } = 750;
+    [JsonPropertyName("MaxLevel")] public int MaxLevel { get; set; } = 10;
 }
 
 namespace RPG
@@ -584,8 +589,8 @@ namespace RPG
 
             foreach (CCSPlayerController player in players)
             {
-                if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive 
-                    || player.IsBot || (bUsingAdrenaline.ContainsKey((int)player.Index) && bUsingAdrenaline[(int)player.Index] != null)) continue;
+                if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive
+                    || player.IsBot) continue;
 
                 var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
@@ -594,7 +599,18 @@ namespace RPG
                     var playerPawn = player.PlayerPawn.Value;
                     if (playerPawn == null || !playerPawn.IsValid) return;
 
-                    SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                    if (bUsingAdrenaline.ContainsKey((int)player.Index) && bUsingAdrenaline[(int)player.Index] != null)
+                    {
+                        var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
+
+
+
+                        SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
+                    }
+                    else
+                    {
+                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                    }
                 }
             }
         }
@@ -605,9 +621,9 @@ namespace RPG
             {
                 var steamid = @event.Attacker.SteamID;
                 storage?.UpdateDb(steamid, "kills", 1);
-                storage?.UpdateDb(steamid, "points", 200);
-                storage?.UpdateDb(steamid, "pointscalc", 200);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}200 xp {ChatColors.Gold}for a kill{ChatColors.Gold}.");
+                storage?.UpdateDb(steamid, "points", Config.NormalKillXP);
+                storage?.UpdateDb(steamid, "pointscalc", Config.NormalKillXP);
+                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.NormalKillXP} xp {ChatColors.Gold}for a kill{ChatColors.Gold}.");
                 RankUpPlayerOrNo(@event.Attacker);
             }
             if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Userid.IsBot) // simple death
@@ -619,33 +635,33 @@ namespace RPG
                 && @event.Headshot && IsCT(@event.Attacker) && @event.Attacker != @event.Userid) // headshot kill
             {
                 var steamid = @event.Attacker.SteamID;
-                storage?.UpdateDb(steamid, "points", 250);
-                storage?.UpdateDb(steamid, "pointscalc", 250);
+                storage?.UpdateDb(steamid, "points", Config.HSKillXP);
+                storage?.UpdateDb(steamid, "pointscalc", Config.HSKillXP);
                 storage?.UpdateDb(steamid, "headshot", 1);
                 storage?.UpdateDb(steamid, "kills", 1);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}250 xp {ChatColors.Gold}for a headshot kill{ChatColors.Gold}.");
+                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.HSKillXP} xp {ChatColors.Gold}for a headshot kill{ChatColors.Gold}.");
                 RankUpPlayerOrNo(@event.Attacker);
             }
             if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
                 && @event.Weapon == "knife" && IsCT(@event.Attacker) && @event.Attacker != @event.Userid) // knife kill
             {
                 var steamid = @event.Attacker.SteamID;
-                storage?.UpdateDb(steamid, "points", 750);
-                storage?.UpdateDb(steamid, "pointscalc", 750);
+                storage?.UpdateDb(steamid, "points", Config.KnifeKillXP);
+                storage?.UpdateDb(steamid, "pointscalc", Config.KnifeKillXP);
                 storage?.UpdateDb(steamid, "knifekills", 1);
                 storage?.UpdateDb(steamid, "kills", 1);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}750 xp {ChatColors.Gold}for a knife kill{ChatColors.Gold}.");
+                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.KnifeKillXP} xp {ChatColors.Gold}for a knife kill{ChatColors.Gold}.");
                 RankUpPlayerOrNo(@event.Attacker);
             }
             if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
                 && @event.Weapon == "hegrenade" && @event.Attacker != @event.Userid) // grenade kill
             {
                 var steamid = @event.Attacker.SteamID;
-                storage?.UpdateDb(steamid, "points", 300);
-                storage?.UpdateDb(steamid, "pointscalc", 300);
+                storage?.UpdateDb(steamid, "points", Config.GrenadeKillXP);
+                storage?.UpdateDb(steamid, "pointscalc", Config.GrenadeKillXP);
                 storage?.UpdateDb(steamid, "grenadekills", 1);
                 storage?.UpdateDb(steamid, "kills", 1);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}300 xp {ChatColors.Gold}for a grenade kill{ChatColors.Gold}.");
+                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.GrenadeKillXP} xp {ChatColors.Gold}for a grenade kill{ChatColors.Gold}.");
                 RankUpPlayerOrNo(@event.Attacker);
             }
 
@@ -720,12 +736,12 @@ namespace RPG
             {
                 // If found, print each skill and its points
                 player.PrintToChat($"{ChatColors.Green}[Skills]{ChatColors.Gold} Your skills are:");
-                player.PrintToChat($" {ChatColors.Gold}Health: {ChatColors.Lime}{playerSkills.Skill1Points}/10");
-                player.PrintToChat($" {ChatColors.Gold}Speed: {ChatColors.Lime}{playerSkills.Skill2Points}/10");
-                player.PrintToChat($" {ChatColors.Gold}Jump: {ChatColors.Lime}{playerSkills.Skill3Points}/10");
-                player.PrintToChat($" {ChatColors.Gold}Knife Damage: {ChatColors.Lime}{playerSkills.Skill4Points}/10");
-                player.PrintToChat($" {ChatColors.Gold}Grenade Damage: {ChatColors.Lime}{playerSkills.Skill5Points}/10");
-                player.PrintToChat($" {ChatColors.Gold}Adrenaline: {ChatColors.Lime}{playerSkills.Skill6Points}/10");
+                player.PrintToChat($" {ChatColors.Gold}Health: {ChatColors.Lime}{playerSkills.Skill1Points}/{Config.MaxLevel}");
+                player.PrintToChat($" {ChatColors.Gold}Speed: {ChatColors.Lime}{playerSkills.Skill2Points}/{Config.MaxLevel}");
+                player.PrintToChat($" {ChatColors.Gold}Jump: {ChatColors.Lime}{playerSkills.Skill3Points}/{Config.MaxLevel}");
+                player.PrintToChat($" {ChatColors.Gold}Knife Damage: {ChatColors.Lime}{playerSkills.Skill4Points}/{Config.MaxLevel}");
+                player.PrintToChat($" {ChatColors.Gold}Grenade Damage: {ChatColors.Lime}{playerSkills.Skill5Points}/{Config.MaxLevel}");
+                player.PrintToChat($" {ChatColors.Gold}Adrenaline: {ChatColors.Lime}{playerSkills.Skill6Points}/{Config.MaxLevel}");
                 player.PrintToChat($" {ChatColors.Green}Available Skill Points: {ChatColors.Lime}{playerSkills.AvailablePoints}");
             }
             else
@@ -782,12 +798,12 @@ namespace RPG
                 {
                     CenterHtmlMenu menu = new CenterHtmlMenu($"Skills Menu");
                     menu.Title = $"<font color='lightblue'>Available Skill Points : <font color='pink'>{availablePoints}<br><font color='yellow'>Upgrade your Skills :<font color='white'><font color='white'>";
-                    menu.AddMenuOption($"Health [{healthPoints}/10]", (p, option) => UpdateSkill(p, "Health", "skillone", commandInfo));
-                    menu.AddMenuOption($"Speed [{speedPoints}/10]", (p, option) => UpdateSkill(p, "Speed", "skilltwo", commandInfo));
-                    menu.AddMenuOption($"Jump [{jumpPoints}/10]", (p, option) => UpdateSkill(p, "Jump", "skillthree", commandInfo));
-                    menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/10]", (p, option) => UpdateSkill(p, "Knife Damage", "skillfour", commandInfo));
-                    menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/10]", (p, option) => UpdateSkill(p, "Grenade Damage", "skillfive", commandInfo));
-                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/10]", (p, option) => UpdateSkill(p, "Adrenaline", "skillsix", commandInfo));
+                    menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Health", "skillone", commandInfo));
+                    menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Speed", "skilltwo", commandInfo));
+                    menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Jump", "skillthree", commandInfo));
+                    menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Knife Damage", "skillfour", commandInfo));
+                    menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Grenade Damage", "skillfive", commandInfo));
+                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Adrenaline", "skillsix", commandInfo));
                     MenuManager.OpenCenterHtmlMenu(this, player, menu);
                 });
             }
@@ -861,7 +877,7 @@ namespace RPG
 
                 if (availablePoints > 0)
                 {
-                    if (currentPoints < 10)
+                    if (currentPoints < Config.MaxLevel)
                     {
                         //updating values in db
                         await storage.UpdateDb(steamid, columnName, 1);
@@ -870,8 +886,8 @@ namespace RPG
 
                         Server.NextFrame(() =>
                         {
-                            player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You upgraded your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}to {ChatColors.Lime}{currentPoints + 1}/10.");
-                            
+                            player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You upgraded your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}to {ChatColors.Lime}{currentPoints + 1}/{Config.MaxLevel}.");
+
                             //updating values in dictionary
                             var task = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamid));
                             task.Wait();
@@ -956,7 +972,7 @@ namespace RPG
                 }
                 var dmgg = (int)newdmgfinal;
                 victim.Pawn.Value.Health -= dmgg;
-            } 
+            }
             else if (@event.Weapon == "knife")
             {
                 var knifeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill4points");
@@ -1054,7 +1070,15 @@ namespace RPG
 
             if (adrenalinePoints >= 1)
             {
-                SetPlayerSpeed(playerPawn, 1.0f + adrenalinePoints * Config.AdrenalineIncreasePerLevel);
+                var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+                if (speedPoints >= 1)
+                {
+                    SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
+                }
+                else
+                {
+                    SetPlayerSpeed(playerPawn, 1.0f + adrenalinePoints * Config.AdrenalineIncreasePerLevel);
+                }
 
                 if (bUsingAdrenaline[(int)player.Index] != null) bUsingAdrenaline[(int)player.Index]?.Kill();
 
@@ -1180,7 +1204,7 @@ namespace RPG
             //Console.WriteLine("Valor es " + speed);
 
             pawn.VelocityModifier = speed;
-            //pawn.GravityScale = speed;
+            pawn.GravityScale = speed;
             Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
             //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flGravityScale");
         }
