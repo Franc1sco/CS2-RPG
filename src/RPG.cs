@@ -1089,13 +1089,16 @@ namespace RPG
 
             if (jumpPoints >= 1)
             {
+                //SetPlayerSpeed(jumperPawn, 1.0f);
                 AddTimer(Config.ApplyJumpTimer, () =>
                 {
+                    //SetPlayerSpeed(jumperPawn, 1.0f);
+
                     var increase = Config.JumpIncreasePerLevel * jumpPoints + 1.0;
 
                     jumperPawn.AbsVelocity.X *= (float)increase;
                     jumperPawn.AbsVelocity.Y *= (float)increase;
-                    jumperPawn.AbsVelocity.Z *= (float)increase;
+                    //jumperPawn.AbsVelocity.Z *= (float)increase;
                 });
             }
             return HookResult.Continue;
