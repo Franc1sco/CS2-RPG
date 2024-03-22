@@ -11,6 +11,10 @@ using Microsoft.Data.Sqlite;
 using CounterStrikeSharp.API.Modules.Entities;
 using CounterStrikeSharp.API.Modules.Timers;
 using System.Numerics;
+using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Modules.Admin;
+using CounterStrikeSharp.API.Modules.Commands.Targeting;
+using Microsoft.Extensions.Logging;
 
 public class ConfigGen : BasePluginConfig
 {
@@ -515,72 +519,6 @@ namespace RPG
 
         private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
 
-        private readonly Dictionary<string, WeaponSpeedStats> weaponSpeedLookup = new Dictionary<string, WeaponSpeedStats>
-        {
-            {"weapon_glock", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_usp_silencer", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_hkp2000", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_elite", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_p250", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_fiveseven", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_cz75a", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_deagle", new WeaponSpeedStats(230.00, 119.60)},
-            {"weapon_revolver", new WeaponSpeedStats(220.00, 114.40)},
-            {"weapon_nova", new WeaponSpeedStats(220.00, 114.40)},
-            {"weapon_xm1014", new WeaponSpeedStats(215.00, 111.80)},
-            {"weapon_sawedoff", new WeaponSpeedStats(210.00, 109.20)},
-            {"weapon_mag7", new WeaponSpeedStats(225.00, 117.00)},
-            {"weapon_m249", new WeaponSpeedStats(195.00, 101.40)},
-            {"weapon_negev", new WeaponSpeedStats(150.00, 78.00)},
-            {"weapon_mac10", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_mp7", new WeaponSpeedStats(220.00, 114.40)},
-            {"weapon_mp9", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_mp5sd", new WeaponSpeedStats(235.00, 122.20)},
-            {"weapon_ump45", new WeaponSpeedStats(230.00, 119.60)},
-            {"weapon_p90", new WeaponSpeedStats(230.00, 119.60)},
-            {"weapon_bizon", new WeaponSpeedStats(240.00, 124.80)},
-            {"weapon_galilar", new WeaponSpeedStats(215.00, 111.80)},
-            {"weapon_famas", new WeaponSpeedStats(220.00, 114.40)},
-            {"weapon_ak47", new WeaponSpeedStats(215.00, 111.80)},
-            {"weapon_m4a4", new WeaponSpeedStats(225.00, 117.00)},
-            {"weapon_m4a1_silencer", new WeaponSpeedStats(225.00, 117.00)},
-            {"weapon_ssg08", new WeaponSpeedStats(230.00, 119.60)},
-            {"weapon_sg556", new WeaponSpeedStats(210.00, 109.20)},
-            {"weapon_aug", new WeaponSpeedStats(220.00, 114.40)},
-            {"weapon_awp", new WeaponSpeedStats(200.00, 104.00)},
-            {"weapon_g3sg1", new WeaponSpeedStats(215.00, 111.80)},
-            {"weapon_scar20", new WeaponSpeedStats(215.00, 111.80)},
-            {"weapon_molotov", new WeaponSpeedStats(245.00, 127.40)},
-            {"weapon_incgrenade", new WeaponSpeedStats(245.00, 127.40)},
-            {"weapon_decoy", new WeaponSpeedStats(245.00, 127.40)},
-            {"weapon_flashbang", new WeaponSpeedStats(245.00, 127.40)},
-            {"weapon_hegrenade", new WeaponSpeedStats(245.00, 127.40)},
-            {"weapon_smokegrenade", new WeaponSpeedStats(245.00, 127.40)},
-            {"weapon_taser", new WeaponSpeedStats(245.00, 127.40)},
-            {"item_healthshot", new WeaponSpeedStats(250.00, 130.00)},
-            {"weapon_knife_t", new WeaponSpeedStats(250.00, 130.00)},
-            {"weapon_knife", new WeaponSpeedStats(250.00, 130.00)},
-            {"weapon_c4", new WeaponSpeedStats(250.00, 130.00)},
-            {"no_knife", new WeaponSpeedStats(260.00, 130.56)} //no knife
-        };
-
-        public struct WeaponSpeedStats
-        {
-            public double Running { get; }
-            public double Walking { get; }
-
-            public WeaponSpeedStats(double running, double walking)
-            {
-                Running = running;
-                Walking = walking;
-            }
-
-            public double GetSpeed(bool isWalking)
-            {
-                return isWalking ? Walking : Running;
-            }
-        }
-
         public override void Load(bool hotReload)
         {
             storage = new MySQLStorage(
@@ -656,23 +594,7 @@ namespace RPG
                     var playerPawn = player.PlayerPawn.Value;
                     if (playerPawn == null || !playerPawn.IsValid) return;
 
-                    var weaponName = "no_knife";
-
-                    var weaponServices = playerPawn.WeaponServices;
-
-                    if (weaponServices != null)
-                    {
-                        var activeWeapon = weaponServices.ActiveWeapon.Value;
-
-                        if (activeWeapon != null)
-                        {
-                            weaponName = activeWeapon.DesignerName;
-                        }
-                    }
-
-                    Console.WriteLine(speedPoints + " por " + Config.SpeedIncreasePerLevel);
-
-                    SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel, weaponName);
+                    SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
                 }
             }
         }
@@ -758,17 +680,6 @@ namespace RPG
                 {
                     player.PrintToChat(message);
                 }
-            }
-        }
-        public void GiveMoney(CCSPlayerController player, int amount)
-        {
-            if (player == null || !player.IsValid || player.IsBot || !player.IsValid)
-            {
-                return;
-            }
-            if (player.InGameMoneyServices != null && amount > 0)
-            {
-                player.InGameMoneyServices.Account += amount;
             }
         }
 
@@ -1159,34 +1070,78 @@ namespace RPG
 
                     var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
-                    var weaponName = "no_knife";
-
-                    var weaponServices = playerPawn.WeaponServices;
-
-                    if (weaponServices != null)
-                    {
-                        var activeWeapon = weaponServices.ActiveWeapon.Value;
-
-                        if (activeWeapon != null)
-                        {
-                            weaponName = activeWeapon.DesignerName;
-                        }
-                    }
-
                     if (speedPoints >= 1)
                     {
-                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel, weaponName);
+                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
                     }
                     else
                     {
-                        SetPlayerSpeed(playerPawn, 1.0f, weaponName);
+                        SetPlayerSpeed(playerPawn, 1.0f);
                     }
                 });
             }
         }
         ///// ################### SKILLS END ################### /////
+        ///
+        ///// ################### COMMANDS ################### /////
+        [ConsoleCommand("css_givexp")]
+        [RequiresPermissions("@css/slay")]
+        [CommandHelper(minArgs: 1, usage: "<#userid or name> <xp>", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+        public void OnGiveXpCommand(CCSPlayerController? caller, CommandInfo command)
+        {
+            string callerName = caller == null ? "Console" : caller.PlayerName;
+            int value = 0;
+            int.TryParse(command.GetArg(2), out value);
+
+            TargetResult? targets = GetTarget(command);
+            if (targets == null) return;
+
+            List<CCSPlayerController> playersToTarget = targets!.Players.Where(player => player != null && player.IsValid && !player.IsHLTV).ToList();
+
+            playersToTarget.ForEach(player =>
+            {
+                if (!player.IsBot && player.SteamID.ToString().Length != 17)
+                    return;
+
+                var steamid = player.SteamID;
+                storage?.UpdateDb(steamid, "points", value);
+                storage?.UpdateDb(steamid, "pointscalc", value);
+                player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}you received {value} exp by {callerName}");
+                RankUpPlayerOrNo(player);
+            });
+        }
+
+        [ConsoleCommand("css_givelevel")]
+        [RequiresPermissions("@css/slay")]
+        [CommandHelper(minArgs: 1, usage: "<#userid or name> <level>", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+        public void OnGiveLevelCommand(CCSPlayerController? caller, CommandInfo command)
+        {
+            string callerName = caller == null ? "Console" : caller.PlayerName;
+            int value = 0;
+            int.TryParse(command.GetArg(2), out value);
+
+            TargetResult? targets = GetTarget(command);
+            if (targets == null) return;
+
+            List<CCSPlayerController> playersToTarget = targets!.Players.Where(player => player != null && player.IsValid && !player.IsHLTV).ToList();
+
+            playersToTarget.ForEach(player =>
+            {
+                if (!player.IsBot && player.SteamID.ToString().Length != 17)
+                    return;
+
+                var steamid = player.SteamID;
+
+                storage?.UpdateDb(steamid, "level", value);
+                storage?.UpdateDb(steamid, "skillavailable", value);
+                storage?.SetDb(steamid, "pointscalc", 0);
+
+                player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}you received {value} levels by {callerName}");
+            });
+        }
 
 
+        ///// ################### COMMANDS END ################### /////
         ///// ################### UTILS ################### /////
 
         private bool IsCT(CCSPlayerController player)
@@ -1216,18 +1171,38 @@ namespace RPG
             return (player != null && player.IsValid && !player.IsBot && !player.IsHLTV && player.PawnIsAlive);
         }
 
-        public void SetPlayerSpeed(CCSPlayerPawn? pawn, float speed, String? activeWeapon = "no_knife")
+        public void SetPlayerSpeed(CCSPlayerPawn? pawn, float speed)
         {
             if (pawn == null || !pawn.IsValid) return;
             //pawn.VelocityModifier = speed;
             //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
 
-            Console.WriteLine("Valor es " + speed);
+            //Console.WriteLine("Valor es " + speed);
 
             pawn.VelocityModifier = speed;
             //pawn.GravityScale = speed;
             Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
             //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flGravityScale");
+        }
+
+        private static TargetResult? GetTarget(CommandInfo command)
+        {
+            TargetResult matches = command.GetArgTargetResult(1);
+
+            if (!matches.Any())
+            {
+                command.ReplyToCommand($"Target {command.GetArg(1)} not found.");
+                return null;
+            }
+
+            if (command.GetArg(1).StartsWith('@'))
+                return matches;
+
+            if (matches.Count() == 1)
+                return matches;
+
+            command.ReplyToCommand($"Multiple targets found for \"{command.GetArg(1)}\".");
+            return null;
         }
     }
 }
@@ -1248,13 +1223,3 @@ public struct WeaponSpeedStats
         return isWalking ? Walking : Running;
     }
 }
-
-/*private void SetPlayerSpeed(CCSPlayerPawn pawn, double forcedPlayerSpeed, String? activeWeapon = "no_knife")
-        {
-            if (!weaponSpeedLookup.TryGetValue(activeWeapon, out WeaponSpeedStats weaponStats)) return;
-            pawn.VelocityModifier = (float)(weaponStats.GetSpeed(pawn.IsWalking) * forcedPlayerSpeed);
-
-            Console.WriteLine("value es " + pawn.VelocityModifier + " siendo del arma "+ weaponStats.GetSpeed(pawn.IsWalking) + " y forzado "+ forcedPlayerSpeed);
-
-            Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
-        }*/
