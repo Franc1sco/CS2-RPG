@@ -41,7 +41,7 @@ public class ConfigGen : BasePluginConfig
 
     [JsonPropertyName("HPIncreasePerLevel")] public int HPIncreasePerLevel { get; set; } = 25;
     [JsonPropertyName("SpeedIncreasePerLevel")] public float SpeedIncreasePerLevel { get; set; } = 0.05f;
-    [JsonPropertyName("JumpIncreasePerLevel")] public float JumpIncreasePerLevel { get; set; } = 11.25f;
+    [JsonPropertyName("JumpIncreasePerLevel")] public float JumpIncreasePerLevel { get; set; } = 0.10f;
     [JsonPropertyName("AdrenalineIncreasePerLevel")] public float AdrenalineIncreasePerLevel { get; set; } = 0.15f;
     [JsonPropertyName("AdrenalineDuration")] public float AdrenalineDuration { get; set; } = 0.5f;
     [JsonPropertyName("AdrenalineOnlyOnHit")] public bool AdrenalineOnlyOnHit { get; set; } = false;
