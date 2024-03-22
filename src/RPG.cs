@@ -15,6 +15,7 @@ using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands.Targeting;
 using Microsoft.Extensions.Logging;
+using YamlDotNet.Core.Tokens;
 
 public class ConfigGen : BasePluginConfig
 {
@@ -223,10 +224,8 @@ namespace RPG
                 }
                 await connLocal.OpenAsync();
                 var exists = await connLocal.QueryFirstOrDefaultAsync($"SELECT steamid FROM {table} WHERE steamid = @SteamID", new { SteamID });
-                Console.WriteLine("hecho1");
                 if (exists == null)
                 {
-                    Console.WriteLine("hecho2");
                     var query = $@"
         INSERT OR IGNORE INTO `{table}` (`steamid`) VALUES (@SteamID);
         ";
@@ -234,7 +233,6 @@ namespace RPG
                     command.Parameters.AddWithValue("@SteamID", SteamID);
                     await command.ExecuteNonQueryAsync();
                 }
-                Console.WriteLine("hecho3");
                 connLocal.Close();
             }
             else
@@ -250,6 +248,40 @@ namespace RPG
                     await conn.ExecuteAsync(sql, new { SteamID });
                 }
                 conn.Close();
+            }
+        }
+
+        public async Task ResetUser(ulong steamID)
+        {
+            if (isSQLite)
+            {
+                try
+                {
+                    await connLocal.OpenAsync();
+                    var sql = $@"DELETE FROM {table} WHERE steamid = @SteamID;";
+                    await connLocal.ExecuteAsync(sql, new { SteamID = steamID });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in UpdateDb: {ex.Message}");
+                }
+            }
+            else
+            {
+                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
+                using (var conn = new MySqlConnection(connectionString))
+                {
+                    try
+                    {
+                        await conn.OpenAsync();
+                        var sql = $@"DELETE FROM {table} WHERE steamid = @SteamID;";
+                        await conn.ExecuteAsync(sql, new { SteamID = steamID });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error in UpdateDb: {ex.Message}");
+                    }
+                }
             }
         }
 
@@ -549,7 +581,9 @@ namespace RPG
 
             AddCommand("skills", "Opens menu to upgrade skills", OnSkillsCommand);
             AddCommand("showskills", "show skills in chat", OnShowskillsCommand);
-            AddCommand("showstats", "show skills in chat", OnShowstatsCommand);
+            AddCommand("showstats", "show stats in chat", OnShowstatsCommand);
+
+            AddCommand("rpgmenu", "show rpgmenu", OnRPGCommand);
 
 
 
@@ -808,6 +842,57 @@ namespace RPG
                 });
             }
         }
+        private async void OnRPGCommand(CCSPlayerController? player, CommandInfo commandInfo)
+        {
+            if (player == null || !player.IsValid || player.IsBot) return;
+
+            CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Menu");
+            menu.AddMenuOption("Open Skills menu", (p, option) => {
+                OnSkillsCommand(player, null);
+            });
+            menu.AddMenuOption("Show Skills", (p, option) => {
+                OnShowskillsCommand(player, null);
+            });
+
+            menu.AddMenuOption("Show Stats", (p, option) => {
+                OnShowstatsCommand(player, null);
+            });
+            menu.AddMenuOption("Reset all", (p, option) => {
+
+                Server.NextFrame(() =>
+                {
+                    Task.Run(async () =>
+                    {
+                        await storage.ResetUser(player.SteamID);
+
+                    }).ContinueWith(task =>
+                    {
+                        Task.Run(async () =>
+                        {
+                            await storage.FirstTimeRegister(player.SteamID);
+
+                        }).ContinueWith(task =>
+                        {
+                            if (task.Exception != null)
+                            {
+                                Console.WriteLine($"Error registering player: {task.Exception}");
+                                return;
+                            }
+                            var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(player.SteamID));
+                            taskNext.ContinueWith(task =>
+                            {
+                                playerSkillsCache[player.SteamID] = task.Result;
+                            });
+                        });
+                    });
+                    player.PrintToChat($" {ChatColors.Green}[Skills] you reseted your level.");
+                });
+
+            });
+            MenuManager.OpenCenterHtmlMenu(this, player, menu);
+        }
+
+
         private HookResult OnPlayerConnectFull(EventPlayerConnectFull @event, GameEventInfo info)
         {
             var player = @event.Userid;
@@ -823,11 +908,11 @@ namespace RPG
                     Console.WriteLine("Storage has not been initialized.");
                     return HookResult.Continue;
                 }
+
                 Server.NextFrame(() =>
                 {
                     Task.Run(async () =>
                     {
-                        Console.WriteLine("hecho0");
                         await storage.FirstTimeRegister(steamID64);
 
                     }).ContinueWith(task =>
