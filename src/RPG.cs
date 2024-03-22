@@ -10,6 +10,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
 using CounterStrikeSharp.API.Modules.Entities;
 using CounterStrikeSharp.API.Modules.Timers;
+using System.Numerics;
 
 public class ConfigGen : BasePluginConfig
 {
@@ -36,7 +37,9 @@ public class ConfigGen : BasePluginConfig
     [JsonPropertyName("HPIncreasePerLevel")] public int HPIncreasePerLevel { get; set; } = 25;
     [JsonPropertyName("SpeedIncreasePerLevel")] public float SpeedIncreasePerLevel { get; set; } = 0.05f;
     [JsonPropertyName("JumpIncreasePerLevel")] public float JumpIncreasePerLevel { get; set; } = 11.25f;
-
+    [JsonPropertyName("AdrenalineIncreasePerLevel")] public float AdrenalineIncreasePerLevel { get; set; } = 0.15f;
+    [JsonPropertyName("AdrenalineDuration")] public float AdrenalineDuration { get; set; } = 0.5f;
+    [JsonPropertyName("AdrenalineOnlyOnHit")] public bool AdrenalineOnlyOnHit { get; set; } = false;
 }
 
 namespace RPG
@@ -48,6 +51,7 @@ namespace RPG
         public int Skill3Points { get; set; }
         public int Skill4Points { get; set; }
         public int Skill5Points { get; set; }
+        public int Skill6Points { get; set; }
         public int AvailablePoints { get; set; }
         public int Level { get; set; }
         public int PointsCalc { get; set; }
@@ -63,6 +67,7 @@ namespace RPG
                 case "skillthree": return Skill3Points;
                 case "skillfour": return Skill4Points;
                 case "skillfive": return Skill5Points;
+                case "skillsix": return Skill6Points;
                 default: throw new ArgumentException("Invalid column name");
             }
         }
@@ -86,6 +91,7 @@ namespace RPG
                 case "skillthree": Skill3Points++; break;
                 case "skillfour": Skill4Points++; break;
                 case "skillfive": Skill5Points++; break;
+                case "skillsix": Skill6Points++; break;
                 default: throw new ArgumentException("Invalid column name");
             }
         }
@@ -422,7 +428,7 @@ namespace RPG
                 try
                 {
                     await connLocal!.OpenAsync();
-                    var sql = $@"SELECT skillone AS Skill1Points, skilltwo AS Skill2Points, skillthree AS Skill3Points, skillfour AS Skill4Points, skillfive AS Skill5Points, skillavailable AS AvailablePoints FROM {table} WHERE steamid = @SteamID;";
+                    var sql = $@"SELECT skillone AS Skill1Points, skilltwo AS Skill2Points, skillthree AS Skill3Points, skillfour AS Skill4Points, skillfive AS Skill5Points, skillsix AS Skill6Points, skillavailable AS AvailablePoints FROM {table} WHERE steamid = @SteamID;";
                     var playerSkills = await connLocal.QueryFirstOrDefaultAsync<PlayerSkills>(sql, new { SteamID = steamID });
 
                     return playerSkills ?? new PlayerSkills();
@@ -441,7 +447,7 @@ namespace RPG
                     try
                     {
                         await conn.OpenAsync();
-                        var sql = $@"SELECT skillone AS Skill1Points, skilltwo AS Skill2Points, skillthree AS Skill3Points, skillfour AS Skill4Points, skillfive AS Skill5Points, skillavailable AS AvailablePoints FROM {table} WHERE steamid = @SteamID;";
+                        var sql = $@"SELECT skillone AS Skill1Points, skilltwo AS Skill2Points, skillthree AS Skill3Points, skillfour AS Skill4Points, skillfive AS Skill5Points, skillsix AS Skill6Points, skillavailable AS AvailablePoints FROM {table} WHERE steamid = @SteamID;";
                         var playerSkills = await conn.QueryFirstOrDefaultAsync<PlayerSkills>(sql, new { SteamID = steamID });
 
                         return playerSkills ?? new PlayerSkills();
@@ -504,8 +510,77 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 19/03/2024-b";
+        public override string ModuleVersion => "1.0 - 22/03/2024a";
         public override string ModuleAuthor => "Franc1sco Franug";
+
+        private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
+
+        private readonly Dictionary<string, WeaponSpeedStats> weaponSpeedLookup = new Dictionary<string, WeaponSpeedStats>
+        {
+            {"weapon_glock", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_usp_silencer", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_hkp2000", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_elite", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_p250", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_fiveseven", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_cz75a", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_deagle", new WeaponSpeedStats(230.00, 119.60)},
+            {"weapon_revolver", new WeaponSpeedStats(220.00, 114.40)},
+            {"weapon_nova", new WeaponSpeedStats(220.00, 114.40)},
+            {"weapon_xm1014", new WeaponSpeedStats(215.00, 111.80)},
+            {"weapon_sawedoff", new WeaponSpeedStats(210.00, 109.20)},
+            {"weapon_mag7", new WeaponSpeedStats(225.00, 117.00)},
+            {"weapon_m249", new WeaponSpeedStats(195.00, 101.40)},
+            {"weapon_negev", new WeaponSpeedStats(150.00, 78.00)},
+            {"weapon_mac10", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_mp7", new WeaponSpeedStats(220.00, 114.40)},
+            {"weapon_mp9", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_mp5sd", new WeaponSpeedStats(235.00, 122.20)},
+            {"weapon_ump45", new WeaponSpeedStats(230.00, 119.60)},
+            {"weapon_p90", new WeaponSpeedStats(230.00, 119.60)},
+            {"weapon_bizon", new WeaponSpeedStats(240.00, 124.80)},
+            {"weapon_galilar", new WeaponSpeedStats(215.00, 111.80)},
+            {"weapon_famas", new WeaponSpeedStats(220.00, 114.40)},
+            {"weapon_ak47", new WeaponSpeedStats(215.00, 111.80)},
+            {"weapon_m4a4", new WeaponSpeedStats(225.00, 117.00)},
+            {"weapon_m4a1_silencer", new WeaponSpeedStats(225.00, 117.00)},
+            {"weapon_ssg08", new WeaponSpeedStats(230.00, 119.60)},
+            {"weapon_sg556", new WeaponSpeedStats(210.00, 109.20)},
+            {"weapon_aug", new WeaponSpeedStats(220.00, 114.40)},
+            {"weapon_awp", new WeaponSpeedStats(200.00, 104.00)},
+            {"weapon_g3sg1", new WeaponSpeedStats(215.00, 111.80)},
+            {"weapon_scar20", new WeaponSpeedStats(215.00, 111.80)},
+            {"weapon_molotov", new WeaponSpeedStats(245.00, 127.40)},
+            {"weapon_incgrenade", new WeaponSpeedStats(245.00, 127.40)},
+            {"weapon_decoy", new WeaponSpeedStats(245.00, 127.40)},
+            {"weapon_flashbang", new WeaponSpeedStats(245.00, 127.40)},
+            {"weapon_hegrenade", new WeaponSpeedStats(245.00, 127.40)},
+            {"weapon_smokegrenade", new WeaponSpeedStats(245.00, 127.40)},
+            {"weapon_taser", new WeaponSpeedStats(245.00, 127.40)},
+            {"item_healthshot", new WeaponSpeedStats(250.00, 130.00)},
+            {"weapon_knife_t", new WeaponSpeedStats(250.00, 130.00)},
+            {"weapon_knife", new WeaponSpeedStats(250.00, 130.00)},
+            {"weapon_c4", new WeaponSpeedStats(250.00, 130.00)},
+            {"no_knife", new WeaponSpeedStats(260.00, 130.56)} //no knife
+        };
+
+        public struct WeaponSpeedStats
+        {
+            public double Running { get; }
+            public double Walking { get; }
+
+            public WeaponSpeedStats(double running, double walking)
+            {
+                Running = running;
+                Walking = walking;
+            }
+
+            public double GetSpeed(bool isWalking)
+            {
+                return isWalking ? Walking : Running;
+            }
+        }
+
         public override void Load(bool hotReload)
         {
             storage = new MySQLStorage(
@@ -521,11 +596,13 @@ namespace RPG
             );
             base.Load(hotReload);
             RegisterEventHandler<EventPlayerConnectFull>(OnPlayerConnectFull);
+            RegisterEventHandler<EventPlayerDisconnect>(OnPlayerConnectDisconnect);
             RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect, HookMode.Pre);
             RegisterEventHandler<EventPlayerHurt>(OnPlayerHurtMultiplier, HookMode.Pre);
             RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath, HookMode.Pre);
             RegisterEventHandler<EventPlayerJump>(OnPlayerJump, HookMode.Pre);
             RegisterEventHandler<EventPlayerSpawn>(eventPlayerSpawn);
+            RegisterEventHandler<EventWeaponFire>(eventWeaponFire);
 
             AddCommand("skills", "Opens menu to upgrade skills", OnSkillsCommand);
             AddCommand("showskills", "show skills in chat", OnShowskillsCommand);
@@ -535,14 +612,32 @@ namespace RPG
 
             if (hotReload)
             {
-                AddTimer(5.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+                AddTimer(2.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
             }
             RegisterListener<Listeners.OnMapStart>(OnMapStartEvent);
 
         }
+
+        private HookResult eventWeaponFire(EventWeaponFire @event, GameEventInfo info)
+        {
+
+            if (Config.AdrenalineOnlyOnHit) return HookResult.Continue;
+
+            var player = @event.Userid;
+
+            if (!IsPlayerValid(player))
+            {
+                return HookResult.Continue;
+            }
+
+            applyAdrenaline(player);
+
+            return HookResult.Continue;
+        }
+
         private void OnMapStartEvent(string mapName)
         {
-            AddTimer(5.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+            AddTimer(2.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
         }
 
         private void TimerCheckVelocity()
@@ -551,13 +646,33 @@ namespace RPG
 
             foreach (CCSPlayerController player in players)
             {
-                if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive) continue;
+                if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive 
+                    || player.IsBot || (bUsingAdrenaline.ContainsKey((int)player.Index) && bUsingAdrenaline[(int)player.Index] != null)) continue;
 
                 var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
                 if (speedPoints >= 1)
                 {
-                    SetPlayerSpeed(player.PlayerPawn.Value, speedPoints * Config.SpeedIncreasePerLevel);
+                    var playerPawn = player.PlayerPawn.Value;
+                    if (playerPawn == null || !playerPawn.IsValid) return;
+
+                    var weaponName = "no_knife";
+
+                    var weaponServices = playerPawn.WeaponServices;
+
+                    if (weaponServices != null)
+                    {
+                        var activeWeapon = weaponServices.ActiveWeapon.Value;
+
+                        if (activeWeapon != null)
+                        {
+                            weaponName = activeWeapon.DesignerName;
+                        }
+                    }
+
+                    Console.WriteLine(speedPoints + " por " + Config.SpeedIncreasePerLevel);
+
+                    SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel, weaponName);
                 }
             }
         }
@@ -699,6 +814,7 @@ namespace RPG
                 player.PrintToChat($" {ChatColors.Gold}Jump: {ChatColors.Lime}{playerSkills.Skill3Points}/10");
                 player.PrintToChat($" {ChatColors.Gold}Knife Damage: {ChatColors.Lime}{playerSkills.Skill4Points}/10");
                 player.PrintToChat($" {ChatColors.Gold}Grenade Damage: {ChatColors.Lime}{playerSkills.Skill5Points}/10");
+                player.PrintToChat($" {ChatColors.Gold}Adrenaline: {ChatColors.Lime}{playerSkills.Skill6Points}/10");
                 player.PrintToChat($" {ChatColors.Green}Available Skill Points: {ChatColors.Lime}{playerSkills.AvailablePoints}");
             }
             else
@@ -749,6 +865,7 @@ namespace RPG
                 int jumpPoints = await storage.GetPlayerIntAttribute(steamid, "skillthree");
                 int knifeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfour");
                 int GrenaeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfive");
+                int adrenalinePoints = await storage.GetPlayerIntAttribute(steamid, "skillsix");
 
                 Server.NextFrame(() =>
                 {
@@ -759,14 +876,18 @@ namespace RPG
                     menu.AddMenuOption($"Jump [{jumpPoints}/10]", (p, option) => UpdateSkill(p, "Jump", "skillthree", commandInfo));
                     menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/10]", (p, option) => UpdateSkill(p, "Knife Damage", "skillfour", commandInfo));
                     menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/10]", (p, option) => UpdateSkill(p, "Grenade Damage", "skillfive", commandInfo));
+                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/10]", (p, option) => UpdateSkill(p, "Adrenaline", "skillsix", commandInfo));
                     MenuManager.OpenCenterHtmlMenu(this, player, menu);
                 });
             }
         }
         private HookResult OnPlayerConnectFull(EventPlayerConnectFull @event, GameEventInfo info)
         {
-            if (@event.Userid != null && @event.Userid.IsValid)
+            var player = @event.Userid;
+            if (player != null && player.IsValid && !player.IsBot)
             {
+                bUsingAdrenaline.Add((int)player.Index, null);
+
                 ulong steamID64 = @event.Userid.SteamID;
 
                 if (storage == null)
@@ -799,6 +920,19 @@ namespace RPG
             }
             return HookResult.Continue;
         }
+        private HookResult OnPlayerConnectDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
+        {
+            var player = @event.Userid;
+            if (player != null && player.IsValid && !player.IsBot)
+            {
+                if (bUsingAdrenaline.ContainsKey((int)player.Index))
+                {
+                    bUsingAdrenaline.Remove((int)player.Index);
+                }
+            }
+            return HookResult.Continue;
+        }
+
         private async void UpdateSkill(CCSPlayerController player, string skillName, string columnName, CommandInfo commandInfo)
         {
             var steamid = player.SteamID;
@@ -867,6 +1001,8 @@ namespace RPG
                         return playerSkills.Skill4Points;
                     case "skill5points":
                         return playerSkills.Skill5Points;
+                    case "skill6points":
+                        return playerSkills.Skill6Points;
                     default:
                         Console.WriteLine($"Invalid skill name provided: {skillName}");
                         return 0;
@@ -882,7 +1018,14 @@ namespace RPG
         {
             var attacker = @event.Attacker;
             var victim = @event.Userid;
-            if (@event.Weapon == "hegrenade" && victim != null && victim.Pawn != null && victim.Pawn.Value != null && !attacker.IsBot && IsCT(attacker) && IsT(victim))
+
+            if (!IsPlayerValid(attacker) || !IsPlayerValid(victim) || victim.UserId == attacker.UserId)
+                return HookResult.Continue;
+
+            if (Config.AdrenalineOnlyOnHit)
+                applyAdrenaline(attacker);
+
+            if (@event.Weapon == "hegrenade")
             {
                 var grenadeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill5points");
                 var normaldmg = @event.DmgHealth;
@@ -902,8 +1045,8 @@ namespace RPG
                 }
                 var dmgg = (int)newdmgfinal;
                 victim.Pawn.Value.Health -= dmgg;
-            }
-            if (@event.Weapon == "knife" && victim != null && victim.Pawn != null && victim.Pawn.Value != null && !attacker.IsBot && IsCT(attacker) && IsT(victim))
+            } 
+            else if (@event.Weapon == "knife")
             {
                 var knifeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill4points");
                 var normaldmg = @event.DmgHealth;
@@ -983,13 +1126,64 @@ namespace RPG
 
                 if (speedPoints >= 1)
                 {
-                    SetPlayerSpeed(playerPawn, speedPoints * Config.SpeedIncreasePerLevel);
+                    SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
                 }
             });
 
             return HookResult.Continue;
         }
 
+        private void applyAdrenaline(CCSPlayerController player)
+        {
+            var playerPawn = player.PlayerPawn.Value;
+
+            if (playerPawn == null) return;
+
+            var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
+
+            if (adrenalinePoints >= 1)
+            {
+                SetPlayerSpeed(playerPawn, 1.0f + adrenalinePoints * Config.AdrenalineIncreasePerLevel);
+
+                if (bUsingAdrenaline[(int)player.Index] != null) bUsingAdrenaline[(int)player.Index]?.Kill();
+
+                bUsingAdrenaline[(int)player.Index] = AddTimer(Config.AdrenalineDuration, () =>
+                {
+                    bUsingAdrenaline[(int)player.Index] = null;
+
+                    if (!IsPlayerValid(player))
+                    {
+                        return;
+                    }
+                    if (playerPawn == null || !playerPawn.IsValid) return;
+
+                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                    var weaponName = "no_knife";
+
+                    var weaponServices = playerPawn.WeaponServices;
+
+                    if (weaponServices != null)
+                    {
+                        var activeWeapon = weaponServices.ActiveWeapon.Value;
+
+                        if (activeWeapon != null)
+                        {
+                            weaponName = activeWeapon.DesignerName;
+                        }
+                    }
+
+                    if (speedPoints >= 1)
+                    {
+                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel, weaponName);
+                    }
+                    else
+                    {
+                        SetPlayerSpeed(playerPawn, 1.0f, weaponName);
+                    }
+                });
+            }
+        }
         ///// ################### SKILLS END ################### /////
 
 
@@ -1022,11 +1216,45 @@ namespace RPG
             return (player != null && player.IsValid && !player.IsBot && !player.IsHLTV && player.PawnIsAlive);
         }
 
-        public void SetPlayerSpeed(CCSPlayerPawn? pawn, float speed)
+        public void SetPlayerSpeed(CCSPlayerPawn? pawn, float speed, String? activeWeapon = "no_knife")
         {
             if (pawn == null || !pawn.IsValid) return;
+            //pawn.VelocityModifier = speed;
+            //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
+
+            Console.WriteLine("Valor es " + speed);
+
             pawn.VelocityModifier = speed;
+            //pawn.GravityScale = speed;
             Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
+            //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flGravityScale");
         }
     }
 }
+
+public struct WeaponSpeedStats
+{
+    public double Running { get; }
+    public double Walking { get; }
+
+    public WeaponSpeedStats(double running, double walking)
+    {
+        Running = running;
+        Walking = walking;
+    }
+
+    public double GetSpeed(bool isWalking)
+    {
+        return isWalking ? Walking : Running;
+    }
+}
+
+/*private void SetPlayerSpeed(CCSPlayerPawn pawn, double forcedPlayerSpeed, String? activeWeapon = "no_knife")
+        {
+            if (!weaponSpeedLookup.TryGetValue(activeWeapon, out WeaponSpeedStats weaponStats)) return;
+            pawn.VelocityModifier = (float)(weaponStats.GetSpeed(pawn.IsWalking) * forcedPlayerSpeed);
+
+            Console.WriteLine("value es " + pawn.VelocityModifier + " siendo del arma "+ weaponStats.GetSpeed(pawn.IsWalking) + " y forzado "+ forcedPlayerSpeed);
+
+            Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
+        }*/
