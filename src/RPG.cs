@@ -50,6 +50,7 @@ public class ConfigGen : BasePluginConfig
     [JsonPropertyName("KnifeKillXP")] public int KnifeKillXP { get; set; } = 300;
     [JsonPropertyName("GrenadeKillXP")] public int GrenadeKillXP { get; set; } = 750;
     [JsonPropertyName("MaxLevel")] public int MaxLevel { get; set; } = 10;
+    [JsonPropertyName("TimeForApplyHP")] public int TimeForApplyHP { get; set; } = 0;
 }
 
 namespace RPG
@@ -551,7 +552,7 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 22/03/2024b";
+        public override string ModuleVersion => "1.0 - 22/03/2024c";
         public override string ModuleAuthor => "Franc1sco Franug";
 
         private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
@@ -1107,35 +1108,70 @@ namespace RPG
                 return HookResult.Continue;
             }
 
-            Server.NextFrame(() =>
+            if (Config.TimeForApplyHP == 0)
             {
-                if (!IsPlayerValid(player))
+                Server.NextFrame(() =>
                 {
-                    return;
-                }
-                var playerPawn = player.PlayerPawn.Value;
+                    if (!IsPlayerValid(player))
+                    {
+                        return;
+                    }
+                    var playerPawn = player.PlayerPawn.Value;
 
-                if (playerPawn == null) return;
+                    if (playerPawn == null) return;
 
-                var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
+                    var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
 
-                if (hpPoints >= 1)
+                    if (hpPoints >= 1)
+                    {
+                        var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
+
+                        playerPawn.Health = newHP;
+                        playerPawn.MaxHealth = newHP;
+
+                        Utilities.SetStateChanged(playerPawn, "CBaseEntity", "m_iHealth");
+                    }
+
+                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                    if (speedPoints >= 1)
+                    {
+                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                    }
+                });
+            } 
+            else
+            {
+                AddTimer(Config.TimeForApplyHP * 1.0f, () =>
                 {
-                    var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
+                    if (!IsPlayerValid(player))
+                    {
+                        return;
+                    }
+                    var playerPawn = player.PlayerPawn.Value;
 
-                    playerPawn.Health = newHP;
-                    playerPawn.MaxHealth = newHP;
+                    if (playerPawn == null) return;
 
-                    Utilities.SetStateChanged(playerPawn, "CBaseEntity", "m_iHealth");
-                }
+                    var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
 
-                var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+                    if (hpPoints >= 1)
+                    {
+                        var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
 
-                if (speedPoints >= 1)
-                {
-                    SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
-                }
-            });
+                        playerPawn.Health = newHP;
+                        playerPawn.MaxHealth = newHP;
+
+                        Utilities.SetStateChanged(playerPawn, "CBaseEntity", "m_iHealth");
+                    }
+
+                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                    if (speedPoints >= 1)
+                    {
+                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                    }
+                });
+            }
 
             return HookResult.Continue;
         }
