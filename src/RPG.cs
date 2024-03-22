@@ -52,6 +52,7 @@ public class ConfigGen : BasePluginConfig
     [JsonPropertyName("MaxLevel")] public int MaxLevel { get; set; } = 10;
     [JsonPropertyName("TimeForApplyHP")] public int TimeForApplyHP { get; set; } = 0;
     [JsonPropertyName("ApplyJumpTimer")] public float ApplyJumpTimer { get; set; } = 0.01f;
+    [JsonPropertyName("JumpDuration")] public float JumpDuration { get; set; } = 0.5f;
 }
 
 namespace RPG
@@ -553,11 +554,11 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 22/03/2024c";
+        public override string ModuleVersion => "1.0 - 22/03/2024d";
         public override string ModuleAuthor => "Franc1sco Franug";
 
         private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
-
+        private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> jumping = new();
         public override void Load(bool hotReload)
         {
             storage = new MySQLStorage(
@@ -578,6 +579,7 @@ namespace RPG
             RegisterEventHandler<EventPlayerHurt>(OnPlayerHurtMultiplier, HookMode.Pre);
             RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath, HookMode.Pre);
             RegisterEventHandler<EventPlayerJump>(OnPlayerJump);
+            RegisterEventHandler<EventPlayerJump>(OnPlayerJumpPre, HookMode.Pre);
             RegisterEventHandler<EventPlayerSpawn>(eventPlayerSpawn);
             RegisterEventHandler<EventWeaponFire>(eventWeaponFire);
 
@@ -626,7 +628,7 @@ namespace RPG
             foreach (CCSPlayerController player in players)
             {
                 if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive
-                    || player.IsBot) continue;
+                    || player.IsBot || (jumping.ContainsKey((int)player.Index) && jumping[(int)player.Index] != null)) continue;
 
                 var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
@@ -901,7 +903,7 @@ namespace RPG
             if (player != null && player.IsValid && !player.IsBot)
             {
                 bUsingAdrenaline.Add((int)player.Index, null);
-
+                jumping.Add((int)player.Index, null);
                 ulong steamID64 = @event.Userid.SteamID;
 
                 if (storage == null)
@@ -942,6 +944,11 @@ namespace RPG
                 if (bUsingAdrenaline.ContainsKey((int)player.Index))
                 {
                     bUsingAdrenaline.Remove((int)player.Index);
+                }
+
+                if (jumping.ContainsKey((int)player.Index))
+                {
+                    jumping.Remove((int)player.Index);
                 }
             }
             return HookResult.Continue;
@@ -1077,6 +1084,32 @@ namespace RPG
             }
             return HookResult.Continue;
         } // applies skills points on grenade & knife dmg
+
+        private HookResult OnPlayerJumpPre(EventPlayerJump @event, GameEventInfo info)
+        {
+            var jumper = @event.Userid;
+            var jumperPawn = jumper.PlayerPawn.Value;
+            if (jumper == null || jumper.Pawn == null || jumper.Pawn.Value == null || jumper.IsBot || jumperPawn == null)
+            {
+                return HookResult.Continue;
+            }
+            var jumpPoints = GetSkillPointsFromDictionary(jumper, "skill3points");
+
+            if (jumpPoints >= 1)
+            {
+                SetPlayerSpeed(jumperPawn, 1.0f);
+
+                if (jumping[(int)jumper.Index] != null) jumping[(int)jumper.Index]?.Kill();
+
+                jumping[(int)jumper.Index] = AddTimer(Config.JumpDuration, () =>
+                {
+                    jumping[(int)jumper.Index] = null;
+
+                });
+            }
+            return HookResult.Continue;
+        }
+
         private HookResult OnPlayerJump(EventPlayerJump @event, GameEventInfo info)
         {
             var jumper = @event.Userid;
@@ -1089,10 +1122,10 @@ namespace RPG
 
             if (jumpPoints >= 1)
             {
-                //SetPlayerSpeed(jumperPawn, 1.0f);
+                SetPlayerSpeed(jumperPawn, 1.0f);
                 AddTimer(Config.ApplyJumpTimer, () =>
                 {
-                    //SetPlayerSpeed(jumperPawn, 1.0f);
+                    SetPlayerSpeed(jumperPawn, 1.0f);
 
                     var increase = Config.JumpIncreasePerLevel * jumpPoints + 1.0;
 
@@ -1185,6 +1218,8 @@ namespace RPG
             var playerPawn = player.PlayerPawn.Value;
 
             if (playerPawn == null) return;
+
+            if (jumping.ContainsKey((int)player.Index) && jumping[(int)player.Index] != null) return;
 
             var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
 
