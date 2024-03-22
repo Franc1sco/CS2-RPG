@@ -1087,12 +1087,13 @@ namespace RPG
 
             if (jumpPoints >= 1)
             {
-                var timer = new CounterStrikeSharp.API.Modules.Timers.Timer(0.01f, () =>
+                Server.NextFrame(() =>
                 {
                     var increase = Config.JumpIncreasePerLevel * jumpPoints + 1.0;
 
                     jumperPawn.AbsVelocity.X *= (float)increase;
                     jumperPawn.AbsVelocity.Y *= (float)increase;
+                    jumperPawn.AbsVelocity.Z *= (float)increase;
                 });
             }
             return HookResult.Continue;
