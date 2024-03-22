@@ -19,3 +19,8 @@ Configure the file RPG.json generated on addons/counterstrikesharp/configs/plugi
 
 * !skills - show skills menu
 * !showskills - show skills in chat
+
+### Admin commands
+
+* !givexp 
+* !givelevel
