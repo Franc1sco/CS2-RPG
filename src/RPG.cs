@@ -51,6 +51,7 @@ public class ConfigGen : BasePluginConfig
     [JsonPropertyName("GrenadeKillXP")] public int GrenadeKillXP { get; set; } = 750;
     [JsonPropertyName("MaxLevel")] public int MaxLevel { get; set; } = 10;
     [JsonPropertyName("TimeForApplyHP")] public int TimeForApplyHP { get; set; } = 0;
+    [JsonPropertyName("ApplyJumpTimer")] public float ApplyJumpTimer { get; set; } = 0.01f;
 }
 
 namespace RPG
@@ -1088,7 +1089,7 @@ namespace RPG
 
             if (jumpPoints >= 1)
             {
-                Server.NextFrame(() =>
+                AddTimer(Config.ApplyJumpTimer, () =>
                 {
                     var increase = Config.JumpIncreasePerLevel * jumpPoints + 1.0;
 
