@@ -519,7 +519,7 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 22/03/2024a";
+        public override string ModuleVersion => "1.0 - 22/03/2024b";
         public override string ModuleAuthor => "Franc1sco Franug";
 
         private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
@@ -543,7 +543,7 @@ namespace RPG
             RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect, HookMode.Pre);
             RegisterEventHandler<EventPlayerHurt>(OnPlayerHurtMultiplier, HookMode.Pre);
             RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath, HookMode.Pre);
-            RegisterEventHandler<EventPlayerJump>(OnPlayerJump, HookMode.Pre);
+            RegisterEventHandler<EventPlayerJump>(OnPlayerJump);
             RegisterEventHandler<EventPlayerSpawn>(eventPlayerSpawn);
             RegisterEventHandler<EventWeaponFire>(eventWeaponFire);
 
@@ -1002,18 +1002,12 @@ namespace RPG
 
             if (jumpPoints >= 1)
             {
-                var eyeAngle = jumperPawn.EyeAngles;
-                var pitch = Math.PI / 180 * eyeAngle.X;
-                var yaw = Math.PI / 180 * eyeAngle.Y;
-                float jumpFloat = (float)jumpPoints;
-                float balancedtimer = (jumpFloat / 250) + 0.16f;
-                var timer = new CounterStrikeSharp.API.Modules.Timers.Timer(balancedtimer, () =>
+                var timer = new CounterStrikeSharp.API.Modules.Timers.Timer(0.01f, () =>
                 {
-                    jumperPawn.AbsVelocity.Z = 180 + 2 * jumpPoints;
-                    var forwardX = Math.Cos(yaw) * Math.Cos(pitch) * (15 + (jumpPoints * Config.JumpIncreasePerLevel));
-                    var forwardY = Math.Sin(yaw) * Math.Cos(pitch) * (15 + (jumpPoints * Config.JumpIncreasePerLevel));
-                    jumperPawn.AbsVelocity.X += (float)forwardX;
-                    jumperPawn.AbsVelocity.Y += (float)forwardY;
+                    var increase = Config.JumpIncreasePerLevel * jumpPoints + 1.0;
+
+                    jumperPawn.AbsVelocity.X *= (float)increase;
+                    jumperPawn.AbsVelocity.Y *= (float)increase;
                 });
             }
             return HookResult.Continue;
