@@ -554,7 +554,7 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 22/03/2024d";
+        public override string ModuleVersion => "1.0 - 23/03/2024a";
         public override string ModuleAuthor => "Franc1sco Franug";
 
         private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
@@ -586,6 +586,7 @@ namespace RPG
             AddCommand("skills", "Opens menu to upgrade skills", OnSkillsCommand);
             AddCommand("showskills", "show skills in chat", OnShowskillsCommand);
             AddCommand("showstats", "show stats in chat", OnShowstatsCommand);
+            AddCommand("sellskills", "sell stats menu", OnSellSkillsCommand);
 
             AddCommand("rpgmenu", "show rpgmenu", OnRPGCommand);
 
@@ -655,7 +656,7 @@ namespace RPG
         private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
         {
             if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
-                && !@event.Headshot && @event.Weapon != "knife" && @event.Weapon != "hegrenade" && @event.Attacker != @event.Userid) // simple kill
+                && !@event.Headshot && @event.Weapon != "hegrenade" && @event.Attacker != @event.Userid) // simple kill
             {
                 var steamid = @event.Attacker.SteamID;
                 storage?.UpdateDb(steamid, "kills", 1);
@@ -680,7 +681,7 @@ namespace RPG
                 @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.HSKillXP} xp {ChatColors.Gold}for a headshot kill{ChatColors.Gold}.");
                 RankUpPlayerOrNo(@event.Attacker);
             }
-            if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
+            /*if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
                 && @event.Weapon == "knife" && IsCT(@event.Attacker) && @event.Attacker != @event.Userid) // knife kill
             {
                 var steamid = @event.Attacker.SteamID;
@@ -690,7 +691,7 @@ namespace RPG
                 storage?.UpdateDb(steamid, "kills", 1);
                 @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.KnifeKillXP} xp {ChatColors.Gold}for a knife kill{ChatColors.Gold}.");
                 RankUpPlayerOrNo(@event.Attacker);
-            }
+            }*/
             if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
                 && @event.Weapon == "hegrenade" && @event.Attacker != @event.Userid) // grenade kill
             {
@@ -846,6 +847,34 @@ namespace RPG
                 });
             }
         }
+        private async void OnSellSkillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
+        {
+            if (player == null || !player.IsValid || player.IsBot) return;
+            var steamid = player.SteamID;
+            if (storage != null)
+            {
+                int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
+                int healthPoints = await storage.GetPlayerIntAttribute(steamid, "skillone");
+                int speedPoints = await storage.GetPlayerIntAttribute(steamid, "skilltwo");
+                int jumpPoints = await storage.GetPlayerIntAttribute(steamid, "skillthree");
+                int knifeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfour");
+                int GrenaeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfive");
+                int adrenalinePoints = await storage.GetPlayerIntAttribute(steamid, "skillsix");
+
+                Server.NextFrame(() =>
+                {
+                    CenterHtmlMenu menu = new CenterHtmlMenu($"Sell Skills Menu");
+                    menu.Title = $"<font color='lightblue'>Available Skill Points : <font color='pink'>{availablePoints}<br><font color='yellow'>Sell your Skills :<font color='white'><font color='white'>";
+                    menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Health", "skillone", commandInfo));
+                    menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Speed", "skilltwo", commandInfo));
+                    menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Jump", "skillthree", commandInfo));
+                    menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Knife Damage", "skillfour", commandInfo));
+                    menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Grenade Damage", "skillfive", commandInfo));
+                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Adrenaline", "skillsix", commandInfo));
+                    MenuManager.OpenCenterHtmlMenu(this, player, menu);
+                });
+            }
+        }
         private async void OnRPGCommand(CCSPlayerController? player, CommandInfo commandInfo)
         {
             if (player == null || !player.IsValid || player.IsBot) return;
@@ -856,6 +885,9 @@ namespace RPG
             });
             menu.AddMenuOption("Show Skills", (p, option) => {
                 OnShowskillsCommand(player, null);
+            });
+            menu.AddMenuOption("Sell Skills", (p, option) => {
+                OnSellSkillsCommand(player, null);
             });
 
             menu.AddMenuOption("Show Stats", (p, option) => {
@@ -952,6 +984,47 @@ namespace RPG
                 }
             }
             return HookResult.Continue;
+        }
+
+        private async void SellSkill(CCSPlayerController player, string skillName, string columnName, CommandInfo commandInfo)
+        {
+            var steamid = player.SteamID;
+
+            if (!playerSkillsDictionary.TryGetValue(steamid, out PlayerSkills? playerSkills))
+            {
+                playerSkills = await LoadPlayerSkillsFromDatabase(steamid);
+                playerSkillsDictionary[steamid] = playerSkills;
+            }
+
+            if (storage != null)
+            {
+                int currentPoints = await storage.GetPlayerIntAttribute(steamid, columnName);
+
+                if (currentPoints > 0)
+                {
+                    // Refund points
+                    await storage.UpdateDb(steamid, columnName, -1);
+                    await storage.UpdateDb(steamid, "skillavailable", 1);
+                    OnSellSkillsCommand(player, commandInfo);
+
+                    Server.NextFrame(() =>
+                    {
+                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You sold your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}and got back one skill point.");
+
+                        // Update dictionary
+                        var task = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamid));
+                        task.Wait();
+                        playerSkillsCache[steamid] = task.Result;
+                    });
+                }
+                else
+                {
+                    Server.NextFrame(() =>
+                    {
+                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}Your skill {ChatColors.Lime}{skillName} {ChatColors.Gold}is already at minimum level.");
+                    });
+                }
+            }
         }
 
         private async void UpdateSkill(CCSPlayerController player, string skillName, string columnName, CommandInfo commandInfo)

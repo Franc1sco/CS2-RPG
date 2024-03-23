@@ -17,7 +17,9 @@ Configure the file RPG.json generated on addons/counterstrikesharp/configs/plugi
 
 ### Commands
 
+* !rpgmenu - opens the full menu
 * !skills - show skills menu
+* !sellskills - shows sell skills menu
 * !showskills - show skills in chat
 
 ### Admin commands
