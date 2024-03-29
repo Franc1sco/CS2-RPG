@@ -895,9 +895,9 @@ namespace RPG
             menu.AddMenuOption("Show Stats", (p, option) => {
                 OnShowstatsCommand(player, null);
             });
-            menu.AddMenuOption("Reset all (Confirmation required)", (p, option) => {
+            menu.AddMenuOption("Reset RPG", (p, option) => {
                 var confirmationMenu = new CenterHtmlMenu("Confirmation");
-                confirmationMenu.AddMenuOption("Yes", (confirmationPlayer, _) => {
+                confirmationMenu.AddMenuOption("Confirm", (confirmationPlayer, _) => {
                     Server.NextFrame(() =>
                     {
                         Task.Run(async () =>
@@ -925,11 +925,8 @@ namespace RPG
                             });
                         });
                         confirmationPlayer.PrintToChat($" {ChatColors.Green}[Skills] you reset your level.");
+                        MenuManager.CloseActiveMenu(confirmationPlayer);
                     });
-                });
-
-                confirmationMenu.AddMenuOption("No", (confirmationPlayer, _) => {
-                    confirmationPlayer.PrintToChat($" {ChatColors.Yellow}[Warning] Reset canceled.");
                 });
 
                 MenuManager.OpenCenterHtmlMenu(this, player, confirmationMenu);
