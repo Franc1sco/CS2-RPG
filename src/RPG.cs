@@ -895,38 +895,46 @@ namespace RPG
             menu.AddMenuOption("Show Stats", (p, option) => {
                 OnShowstatsCommand(player, null);
             });
-            menu.AddMenuOption("Reset all", (p, option) => {
-
-                Server.NextFrame(() =>
-                {
-                    Task.Run(async () =>
-                    {
-                        await storage.ResetUser(player.SteamID);
-
-                    }).ContinueWith(task =>
+            menu.AddMenuOption("Reset all (Confirmation required)", (p, option) => {
+                var confirmationMenu = new CenterHtmlMenu("Confirmation");
+                confirmationMenu.AddMenuOption("Yes", (confirmationPlayer, _) => {
+                    Server.NextFrame(() =>
                     {
                         Task.Run(async () =>
                         {
-                            await storage.FirstTimeRegister(player.SteamID);
+                            await storage.ResetUser(confirmationPlayer.SteamID);
 
                         }).ContinueWith(task =>
                         {
-                            if (task.Exception != null)
+                            Task.Run(async () =>
                             {
-                                Console.WriteLine($"Error registering player: {task.Exception}");
-                                return;
-                            }
-                            var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(player.SteamID));
-                            taskNext.ContinueWith(task =>
+                                await storage.FirstTimeRegister(confirmationPlayer.SteamID);
+
+                            }).ContinueWith(task =>
                             {
-                                playerSkillsCache[player.SteamID] = task.Result;
+                                if (task.Exception != null)
+                                {
+                                    Console.WriteLine($"Error registering player: {task.Exception}");
+                                    return;
+                                }
+                                var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(confirmationPlayer.SteamID));
+                                taskNext.ContinueWith(task =>
+                                {
+                                    playerSkillsCache[confirmationPlayer.SteamID] = task.Result;
+                                });
                             });
                         });
+                        confirmationPlayer.PrintToChat($" {ChatColors.Green}[Skills] you reset your level.");
                     });
-                    player.PrintToChat($" {ChatColors.Green}[Skills] you reseted your level.");
                 });
 
+                confirmationMenu.AddMenuOption("No", (confirmationPlayer, _) => {
+                    confirmationPlayer.PrintToChat($" {ChatColors.Yellow}[Warning] Reset canceled.");
+                });
+
+                MenuManager.OpenCenterHtmlMenu(this, player, confirmationMenu);
             });
+
             MenuManager.OpenCenterHtmlMenu(this, player, menu);
         }
 
