@@ -556,11 +556,11 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 23/03/2024a";
+        public override string ModuleVersion => "1.0 - 2/04/2024a";
         public override string ModuleAuthor => "Franc1sco Franug";
 
-        private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
-        private readonly Dictionary<int, CounterStrikeSharp.API.Modules.Timers.Timer?> jumping = new();
+        private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
+        private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> jumping = new();
         public override void Load(bool hotReload)
         {
             storage = new MySQLStorage(
@@ -631,26 +631,35 @@ namespace RPG
             foreach (CCSPlayerController player in players)
             {
                 if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive
-                    || player.IsBot || (jumping.ContainsKey((int)player.Index) && jumping[(int)player.Index] != null)) continue;
+                    || player.IsBot) continue;
 
-                var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
-
-                if (speedPoints >= 1)
+                if (storage != null && !playerSkillsCache.ContainsKey(player.SteamID))
                 {
-                    var playerPawn = player.PlayerPawn.Value;
-                    if (playerPawn == null || !playerPawn.IsValid) return;
+                    connectedUser(player);
+                    continue;
+                }
 
-                    if (bUsingAdrenaline.ContainsKey((int)player.Index) && bUsingAdrenaline[(int)player.Index] != null)
+                if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] == null)
+                {
+                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                    if (speedPoints >= 1)
                     {
-                        var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
+                        var playerPawn = player.PlayerPawn.Value;
+                        if (playerPawn == null || !playerPawn.IsValid) return;
+
+                        if (bUsingAdrenaline.ContainsKey(player.UserId) && bUsingAdrenaline[player.UserId] != null)
+                        {
+                            var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
 
 
 
-                        SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
-                    }
-                    else
-                    {
-                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                            SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
+                        }
+                        else
+                        {
+                            SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                        }
                     }
                 }
             }
@@ -941,53 +950,59 @@ namespace RPG
             var player = @event.Userid;
             if (player != null && player.IsValid && !player.IsBot)
             {
-                bUsingAdrenaline.Add((int)player.Index, null);
-                jumping.Add((int)player.Index, null);
-                ulong steamID64 = @event.Userid.SteamID;
-
-                if (storage == null)
-                {
-                    Console.WriteLine("Storage has not been initialized.");
-                    Console.WriteLine("Storage has not been initialized.");
-                    return HookResult.Continue;
-                }
-
-                Server.NextFrame(() =>
-                {
-                    Task.Run(async () =>
-                    {
-                        await storage.FirstTimeRegister(steamID64);
-
-                    }).ContinueWith(task =>
-                    {
-                        if (task.Exception != null)
-                        {
-                            Console.WriteLine($"Error registering player: {task.Exception}");
-                            return;
-                        }
-                        var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamID64));
-                        taskNext.ContinueWith(task =>
-                        {
-                            playerSkillsCache[steamID64] = task.Result;
-                        });
-                    });
-                });
+                connectedUser(player);
             }
             return HookResult.Continue;
+        }
+
+        private void connectedUser(CCSPlayerController player)
+        {
+            bUsingAdrenaline.Add(player.UserId, null);
+            jumping.Add(player.UserId, null);
+            ulong steamID64 = player.SteamID;
+
+            if (storage == null)
+            {
+
+                Console.WriteLine("Storage has not been initialized.");
+                Console.WriteLine("Storage has not been initialized.");
+                return;
+            }
+
+            Server.NextFrame(() =>
+            {
+                Task.Run(async () =>
+                {
+                    await storage.FirstTimeRegister(steamID64);
+
+                }).ContinueWith(task =>
+                {
+                    if (task.Exception != null)
+                    {
+                        Console.WriteLine($"Error registering player: {task.Exception}");
+                        return;
+                    }
+                    var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamID64));
+                    taskNext.ContinueWith(task =>
+                    {
+                        playerSkillsCache[steamID64] = task.Result;
+                    });
+                });
+            });
         }
         private HookResult OnPlayerConnectDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
         {
             var player = @event.Userid;
             if (player != null && player.IsValid && !player.IsBot)
             {
-                if (bUsingAdrenaline.ContainsKey((int)player.Index))
+                if (bUsingAdrenaline.ContainsKey(player.UserId))
                 {
-                    bUsingAdrenaline.Remove((int)player.Index);
+                    bUsingAdrenaline.Remove(player.UserId);
                 }
 
-                if (jumping.ContainsKey((int)player.Index))
+                if (jumping.ContainsKey(player.UserId))
                 {
-                    jumping.Remove((int)player.Index);
+                    jumping.Remove(player.UserId);
                 }
             }
             return HookResult.Continue;
@@ -1101,7 +1116,7 @@ namespace RPG
         public int GetSkillPointsFromDictionary(CCSPlayerController player, string skillName)
         {
             var steamid = player.SteamID;
-            if (playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
+            if (playerSkillsCache.ContainsKey(steamid) && playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
             {
                 switch (skillName.ToLower())
                 {
@@ -1192,11 +1207,11 @@ namespace RPG
             {
                 SetPlayerSpeed(jumperPawn, 1.0f);
 
-                if (jumping[(int)jumper.Index] != null) jumping[(int)jumper.Index]?.Kill();
+                if (jumping[jumper.UserId] != null) jumping[jumper.UserId]?.Kill();
 
-                jumping[(int)jumper.Index] = AddTimer(Config.JumpDuration, () =>
+                jumping[jumper.UserId] = AddTimer(Config.JumpDuration, () =>
                 {
-                    jumping[(int)jumper.Index] = null;
+                    jumping[jumper.UserId] = null;
 
                 });
             }
@@ -1312,7 +1327,7 @@ namespace RPG
 
             if (playerPawn == null) return;
 
-            if (jumping.ContainsKey((int)player.Index) && jumping[(int)player.Index] != null) return;
+            if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] != null) return;
 
             var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
 
@@ -1328,11 +1343,11 @@ namespace RPG
                     SetPlayerSpeed(playerPawn, 1.0f + adrenalinePoints * Config.AdrenalineIncreasePerLevel);
                 }
 
-                if (bUsingAdrenaline[(int)player.Index] != null) bUsingAdrenaline[(int)player.Index]?.Kill();
+                if (bUsingAdrenaline[player.UserId] != null) bUsingAdrenaline[player.UserId]?.Kill();
 
-                bUsingAdrenaline[(int)player.Index] = AddTimer(Config.AdrenalineDuration, () =>
+                bUsingAdrenaline[player.UserId] = AddTimer(Config.AdrenalineDuration, () =>
                 {
-                    bUsingAdrenaline[(int)player.Index] = null;
+                    bUsingAdrenaline[player.UserId] = null;
 
                     if (!IsPlayerValid(player))
                     {
