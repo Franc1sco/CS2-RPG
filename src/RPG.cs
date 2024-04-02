@@ -556,7 +556,7 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 2/04/2024a";
+        public override string ModuleVersion => "1.0 - 2/04/2024b";
         public override string ModuleAuthor => "Franc1sco Franug";
 
         private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
@@ -621,7 +621,7 @@ namespace RPG
 
         private void OnMapStartEvent(string mapName)
         {
-            AddTimer(2.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+            AddTimer(1.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
         }
 
         private void TimerCheckVelocity()
@@ -631,7 +631,7 @@ namespace RPG
             foreach (CCSPlayerController player in players)
             {
                 if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive
-                    || player.IsBot) continue;
+                    || player.IsBot || player.PlayerPawn.Value == null) continue;
 
                 if (storage != null && !playerSkillsCache.ContainsKey(player.SteamID))
                 {
@@ -639,7 +639,7 @@ namespace RPG
                     continue;
                 }
 
-                if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] == null)
+                if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] == null && player.PlayerPawn.Value.OnGroundLastTick)
                 {
                     var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
@@ -1327,7 +1327,7 @@ namespace RPG
 
             if (playerPawn == null) return;
 
-            if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] != null) return;
+            //if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] != null) return;
 
             var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
 
