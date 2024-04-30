@@ -8,14 +8,10 @@ using CounterStrikeSharp.API;
 using static Dapper.SqlMapper;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
-using CounterStrikeSharp.API.Modules.Entities;
 using CounterStrikeSharp.API.Modules.Timers;
-using System.Numerics;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands.Targeting;
-using Microsoft.Extensions.Logging;
-using YamlDotNet.Core.Tokens;
 
 public class ConfigGen : BasePluginConfig
 {
@@ -55,6 +51,15 @@ public class ConfigGen : BasePluginConfig
     [JsonPropertyName("TimeForApplyHP")] public int TimeForApplyHP { get; set; } = 0;
     [JsonPropertyName("ApplyJumpTimer")] public float ApplyJumpTimer { get; set; } = 0.01f;
     [JsonPropertyName("JumpDuration")] public float JumpDuration { get; set; } = 0.5f;
+    [JsonPropertyName("CreditsEarnedPerLevel")] public int CreditsEarnedPerLevel { get; set; } = 500;
+    [JsonPropertyName("CreditsStart")] public int CreditsStart { get; set; } = 0;
+    [JsonPropertyName("UpgradeCostIncreased")] public int UpgradeCostIncreased { get; set; } = 500;
+    [JsonPropertyName("DisableHealth")] public bool DisableHealth { get; set; } = false;
+    [JsonPropertyName("DisableSpeed")] public bool DisableSpeed { get; set; } = false;
+    [JsonPropertyName("DisableJump")] public bool DisableJump { get; set; } = false;
+    [JsonPropertyName("DisableKnifeDamage")] public bool DisableKnifeDamage { get; set; } = false;
+    [JsonPropertyName("DisableGrenadeDamage")] public bool DisableGrenadeDamage { get; set; } = false;
+    [JsonPropertyName("DisableAdrenaline")] public bool DisableAdrenaline { get; set; } = false;
 }
 
 namespace RPG
@@ -124,7 +129,7 @@ namespace RPG
 
         private MySqlConnection? conn;
         private SqliteConnection? connLocal;
-        public MySQLStorage(string ip, int port, string user, string password, string database, string table, bool isSQLite, string sqliteFilePath, int xPLevel)
+        public MySQLStorage(string ip, int port, string user, string password, string database, string table, bool isSQLite, string sqliteFilePath, int xPLevel, int startCredits)
         {
             string connectStr = $"server={ip};port={port};user={user};password={password};database={database};";
             this.ip = ip;
@@ -159,7 +164,7 @@ namespace RPG
                 zombieinfections INTEGER NOT NULL DEFAULT 0,
                 points INTEGER NOT NULL DEFAULT 0,
                 pointscalc INTEGER NOT NULL DEFAULT 0,       
-                skillavailable INTEGER NOT NULL DEFAULT 0,
+                skillavailable INTEGER NOT NULL DEFAULT {startCredits},
                 skillone INTEGER NOT NULL DEFAULT 0,
                 skilltwo INTEGER NOT NULL DEFAULT 0,
                 skillthree INTEGER NOT NULL DEFAULT 0,
@@ -169,12 +174,7 @@ namespace RPG
                 skillseven INTEGER NOT NULL DEFAULT 0,
                 skilleight INTEGER NOT NULL DEFAULT 0,
                 skillnine INTEGER NOT NULL DEFAULT 0,      
-                level INTEGER NOT NULL DEFAULT 1,
-                rank INTEGER NOT NULL DEFAULT 0,
-                skin TEXT,
-                class TEXT,
-                zclass TEXT,
-                hclass TEXT     
+                level INTEGER NOT NULL DEFAULT 1
                 );";
 
                 using (SqliteCommand command = new SqliteCommand(query, connLocal))
@@ -199,7 +199,7 @@ namespace RPG
                     `zombieinfections` bigint NOT NULL DEFAULT 0,
                     `points` bigint NOT NULL DEFAULT 0,
                     `pointscalc` bigint NOT NULL DEFAULT 0,       
-                    `skillavailable` bigint NOT NULL DEFAULT 0,
+                    `skillavailable` bigint NOT NULL DEFAULT {startCredits},
                     `skillone` int NOT NULL DEFAULT 0,
                     `skilltwo` int NOT NULL DEFAULT 0,
                     `skillthree` int NOT NULL DEFAULT 0,
@@ -210,11 +210,7 @@ namespace RPG
                     `skilleight` int NOT NULL DEFAULT 0,
                     `skillnine` int NOT NULL DEFAULT 0,      
                     `level` bigint NOT NULL DEFAULT 1,
-                    `rank` bigint NOT NULL DEFAULT 0,
-                    `skin` TEXT,
-                    `class` TEXT,
-                    `zclass` TEXT,
-                    `hclass` TEXT        
+                    `rank` bigint NOT NULL DEFAULT 0
                 );");
             }
         }
@@ -556,7 +552,7 @@ namespace RPG
 
         private MySQLStorage? storage;
         public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 2/04/2024a";
+        public override string ModuleVersion => "1.1 - 30/04/2024a";
         public override string ModuleAuthor => "Franc1sco Franug";
 
         private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
@@ -572,7 +568,8 @@ namespace RPG
                 Config.DatabaseTable,
                 Config.DatabaseType == "SQLite",
                 Config.DatabaseFilePath,
-                Config.XPLevel
+                Config.XPLevel,
+                Config.CreditsStart
             );
             base.Load(hotReload);
             RegisterEventHandler<EventPlayerConnectFull>(OnPlayerConnectFull);
@@ -605,7 +602,7 @@ namespace RPG
         private HookResult eventWeaponFire(EventWeaponFire @event, GameEventInfo info)
         {
 
-            if (Config.AdrenalineOnlyOnHit) return HookResult.Continue;
+            if (Config.AdrenalineOnlyOnHit || Config.DisableAdrenaline) return HookResult.Continue;
 
             var player = @event.Userid;
 
@@ -643,7 +640,7 @@ namespace RPG
                 {
                     var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
-                    if (speedPoints >= 1)
+                    if (speedPoints >= 1 && !Config.DisableSpeed)
                     {
                         var playerPawn = player.PlayerPawn.Value;
                         if (playerPawn == null || !playerPawn.IsValid) return;
@@ -651,8 +648,6 @@ namespace RPG
                         if (bUsingAdrenaline.ContainsKey(player.UserId) && bUsingAdrenaline[player.UserId] != null)
                         {
                             var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
-
-
 
                             SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
                         }
@@ -726,13 +721,13 @@ namespace RPG
                 if (canRankUp)
                 {
                     storage?.UpdateDb(steamid, "level", 1);
-                    storage?.UpdateDb(steamid, "skillavailable", 1);
+                    storage?.UpdateDb(steamid, "skillavailable", Config.CreditsEarnedPerLevel);
                     storage?.SetDb(steamid, "pointscalc", 0);
                     if (storage != null)
                     {
                         int level = storage.GetPlayerIntAttribute(steamid, "level").GetAwaiter().GetResult();
                         player.PrintToChat($" {ChatColors.Gold}You have leveled up! You are now {ChatColors.Lime}level {level}{ChatColors.Gold}.");
-                        player.PrintToChat($" {ChatColors.Gold}You earned a skill point for levelling up! Type {ChatColors.Lime}!skills{ChatColors.Gold} to use it.");
+                        player.PrintToChat($" {ChatColors.Gold}You earned {Config.CreditsEarnedPerLevel} credits for levelling up! Type {ChatColors.Lime}!skills{ChatColors.Gold} to use it.");
                         BroadcastMessageToAllExcept(player, $" {ChatColors.Lime}{player.PlayerName} {ChatColors.Gold}have leveled up! He is now {ChatColors.Lime}level {level}{ChatColors.Gold}.");
                     }
                 }
@@ -844,16 +839,17 @@ namespace RPG
                 int GrenaeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfive");
                 int adrenalinePoints = await storage.GetPlayerIntAttribute(steamid, "skillsix");
 
+
                 Server.NextFrame(() =>
                 {
-                    CenterHtmlMenu menu = new CenterHtmlMenu($"Skills Menu");
-                    menu.Title = $"<font color='lightblue'>Available Skill Points : <font color='pink'>{availablePoints}<br><font color='yellow'>Upgrade your Skills :<font color='white'><font color='white'>";
-                    menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Health", "skillone", commandInfo));
-                    menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}]", (p, option) => UpdateSkill(p, "Speed", "skilltwo", commandInfo));
-                    menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Jump", "skillthree", commandInfo));
-                    menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Knife Damage", "skillfour", commandInfo));
-                    menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Grenade Damage", "skillfive", commandInfo));
-                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}]", (p, option) => UpdateSkill(p, "Adrenaline", "skillsix", commandInfo));
+                    CenterHtmlMenu menu = new CenterHtmlMenu($"Skills Menu", this);
+                    menu.Title = $"<font color='lightblue'>Available Credits : <font color='pink'>{availablePoints}<br><font color='yellow'>Upgrade your Skills :<font color='white'><font color='white'>";
+                    if (!Config.DisableHealth) menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}] {healthPoints * Config.UpgradeCostIncreased} credits", (p, option) => UpdateSkill(p, "Health", "skillone", commandInfo), availablePoints < (healthPoints * Config.UpgradeCostIncreased));
+                    if (!Config.DisableSpeed) menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}] {speedPoints * Config.UpgradeCostIncreased} credits", (p, option) => UpdateSkill(p, "Speed", "skilltwo", commandInfo), availablePoints < (speedPoints * Config.UpgradeCostIncreased));
+                    if (!Config.DisableJump) menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}] {jumpPoints * Config.UpgradeCostIncreased} credits", (p, option) => UpdateSkill(p, "Jump", "skillthree", commandInfo), availablePoints < (jumpPoints * Config.UpgradeCostIncreased));
+                    if (!Config.DisableKnifeDamage) menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}] {knifeDmgPoints * Config.UpgradeCostIncreased} credits", (p, option) => UpdateSkill(p, "Knife Damage", "skillfour", commandInfo), availablePoints < (knifeDmgPoints * Config.UpgradeCostIncreased));
+                    if (!Config.DisableGrenadeDamage) menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}] {GrenaeDmgPoints * Config.UpgradeCostIncreased} credits", (p, option) => UpdateSkill(p, "Grenade Damage", "skillfive", commandInfo), availablePoints < (GrenaeDmgPoints * Config.UpgradeCostIncreased));
+                    if (!Config.DisableAdrenaline) menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}] {adrenalinePoints * Config.UpgradeCostIncreased} credits", (p, option) => UpdateSkill(p, "Adrenaline", "skillsix", commandInfo), availablePoints < (adrenalinePoints * Config.UpgradeCostIncreased));
                     MenuManager.OpenCenterHtmlMenu(this, player, menu);
                 });
             }
@@ -874,23 +870,23 @@ namespace RPG
 
                 Server.NextFrame(() =>
                 {
-                    CenterHtmlMenu menu = new CenterHtmlMenu($"Sell Skills Menu");
-                    menu.Title = $"<font color='lightblue'>Available Skill Points : <font color='pink'>{availablePoints}<br><font color='yellow'>Sell your Skills :<font color='white'><font color='white'>";
-                    menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Health", "skillone", commandInfo));
-                    menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}]", (p, option) => SellSkill(p, "Speed", "skilltwo", commandInfo));
-                    menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Jump", "skillthree", commandInfo));
-                    menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Knife Damage", "skillfour", commandInfo));
-                    menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Grenade Damage", "skillfive", commandInfo));
-                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}]", (p, option) => SellSkill(p, "Adrenaline", "skillsix", commandInfo));
+                    CenterHtmlMenu menu = new CenterHtmlMenu($"Sell Skills Menu", this);
+                    menu.Title = $"<font color='lightblue'>Available Credits : <font color='pink'>{availablePoints}<br><font color='yellow'>Sell your Skills :<font color='white'><font color='white'>";
+                    if (!Config.DisableHealth) menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Health", "skillone", commandInfo));
+                    if (!Config.DisableSpeed) menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}]", (p, option) => SellSkill(p, "Speed", "skilltwo", commandInfo));
+                    if (!Config.DisableJump) menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Jump", "skillthree", commandInfo));
+                    if (!Config.DisableKnifeDamage) menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Knife Damage", "skillfour", commandInfo));
+                    if (!Config.DisableGrenadeDamage) menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Grenade Damage", "skillfive", commandInfo));
+                    if (!Config.DisableAdrenaline) menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}]", (p, option) => SellSkill(p, "Adrenaline", "skillsix", commandInfo));
                     MenuManager.OpenCenterHtmlMenu(this, player, menu);
                 });
             }
         }
-        private async void OnRPGCommand(CCSPlayerController? player, CommandInfo commandInfo)
+        private void OnRPGCommand(CCSPlayerController? player, CommandInfo commandInfo)
         {
             if (player == null || !player.IsValid || player.IsBot) return;
 
-            CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Menu");
+            CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Menu", this);
             menu.AddMenuOption("Open Skills menu", (p, option) => {
                 OnSkillsCommand(player, null);
             });
@@ -905,7 +901,7 @@ namespace RPG
                 OnShowstatsCommand(player, null);
             });
             menu.AddMenuOption("Reset RPG", (p, option) => {
-                var confirmationMenu = new CenterHtmlMenu("Confirmation");
+                var confirmationMenu = new CenterHtmlMenu("Confirmation", this);
                 confirmationMenu.AddMenuOption("Confirm", (confirmationPlayer, _) => {
                     Server.NextFrame(() =>
                     {
@@ -1025,13 +1021,14 @@ namespace RPG
                 if (currentPoints > 0)
                 {
                     // Refund points
+                    var price = currentPoints * Config.UpgradeCostIncreased;
                     await storage.UpdateDb(steamid, columnName, -1);
-                    await storage.UpdateDb(steamid, "skillavailable", 1);
+                    await storage.UpdateDb(steamid, "skillavailable", price);
                     OnSellSkillsCommand(player, commandInfo);
 
                     Server.NextFrame(() =>
                     {
-                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You sold your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}and got back one skill point.");
+                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You sold your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}and got back {price} credits.");
 
                         // Update dictionary
                         var task = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamid));
@@ -1077,13 +1074,13 @@ namespace RPG
                 int currentPoints = await storage.GetPlayerIntAttribute(steamid, columnName);
                 int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
 
-                if (availablePoints > 0)
+                if (availablePoints >= currentPoints * Config.UpgradeCostIncreased)
                 {
                     if (currentPoints < GetMaxLevel(columnName))
                     {
                         //updating values in db
                         await storage.UpdateDb(steamid, columnName, 1);
-                        await storage.UpdateDb(steamid, "skillavailable", -1);
+                        await storage.UpdateDb(steamid, "skillavailable", -(currentPoints * Config.UpgradeCostIncreased));
                         OnSkillsCommand(player, commandInfo);
 
                         Server.NextFrame(() =>
@@ -1104,11 +1101,11 @@ namespace RPG
                         });
                     }
                 }
-                if (availablePoints == 0)
+                else
                 {
                     Server.NextFrame(() =>
                     {
-                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You do not have any available skill points to use.");
+                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You do not have enought credits to use.");
                     });
                 }
             }
@@ -1154,7 +1151,7 @@ namespace RPG
             if (Config.AdrenalineOnlyOnHit)
                 applyAdrenaline(attacker);
 
-            if (@event.Weapon == "hegrenade")
+            if (!Config.DisableGrenadeDamage && @event.Weapon == "hegrenade")
             {
                 var grenadeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill5points");
                 var normaldmg = @event.DmgHealth;
@@ -1175,7 +1172,7 @@ namespace RPG
                 var dmgg = (int)newdmgfinal;
                 victim.Pawn.Value.Health -= dmgg;
             }
-            else if (@event.Weapon == "knife")
+            else if (!Config.DisableKnifeDamage && @event.Weapon == "knife")
             {
                 var knifeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill4points");
                 var normaldmg = @event.DmgHealth;
@@ -1203,7 +1200,7 @@ namespace RPG
             }
             var jumpPoints = GetSkillPointsFromDictionary(jumper, "skill3points");
 
-            if (jumpPoints >= 1)
+            if (jumpPoints >= 1 && !Config.DisableJump)
             {
                 SetPlayerSpeed(jumperPawn, 1.0f);
 
@@ -1228,7 +1225,7 @@ namespace RPG
             }
             var jumpPoints = GetSkillPointsFromDictionary(jumper, "skill3points");
 
-            if (jumpPoints >= 1)
+            if (jumpPoints >= 1 && !Config.DisableJump)
             {
                 SetPlayerSpeed(jumperPawn, 1.0f);
                 AddTimer(Config.ApplyJumpTimer, () =>
@@ -1267,7 +1264,7 @@ namespace RPG
 
                     var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
 
-                    if (hpPoints >= 1)
+                    if (hpPoints >= 1 && !Config.DisableHealth)
                     {
                         var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
 
@@ -1279,7 +1276,7 @@ namespace RPG
 
                     var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
-                    if (speedPoints >= 1)
+                    if (speedPoints >= 1 && !Config.DisableSpeed)
                     {
                         SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
                     }
@@ -1299,7 +1296,7 @@ namespace RPG
 
                     var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
 
-                    if (hpPoints >= 1)
+                    if (hpPoints >= 1 && !Config.DisableHealth)
                     {
                         var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
 
@@ -1311,7 +1308,7 @@ namespace RPG
 
                     var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
 
-                    if (speedPoints >= 1)
+                    if (speedPoints >= 1 && !Config.DisableSpeed)
                     {
                         SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
                     }
@@ -1331,7 +1328,7 @@ namespace RPG
 
             var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
 
-            if (adrenalinePoints >= 1)
+            if (adrenalinePoints >= 1 && !Config.DisableAdrenaline)
             {
                 var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
                 if (speedPoints >= 1)
