@@ -14,6 +14,7 @@ using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands.Targeting;
 using CounterStrikeSharp.API.Modules.Entities;
 using System.Threading.Tasks;
+using System.Reflection.Emit;
 
 public class ConfigGen : BasePluginConfig
 {
@@ -223,7 +224,7 @@ namespace RPG
                 );");
             }
         }
-        public async Task FirstTimeRegister(ulong SteamID)
+        public async Task FirstTimeRegister(ulong SteamID, string name)
         {
             if (isSQLite)
             {
@@ -236,14 +237,22 @@ namespace RPG
                 var exists = await connLocal.QueryFirstOrDefaultAsync($"SELECT steamid FROM {table} WHERE steamid = @SteamID", new { SteamID });
                 if (exists == null)
                 {
-                    var query = $@"
-        INSERT OR IGNORE INTO `{table}` (`steamid`) VALUES (@SteamID);
+                    try
+                    {
+                        var query = $@"
+        INSERT OR IGNORE INTO `{table}` (`steamid`, `name`) VALUES (@SteamID, @name);
         ";
-                    var command = new SqliteCommand(query, connLocal);
-                    command.Parameters.AddWithValue("@SteamID", SteamID);
-                    await command.ExecuteNonQueryAsync();
+                        var command = new SqliteCommand(query, connLocal);
+                        command.Parameters.AddWithValue("@SteamID", SteamID);
+                        command.Parameters.AddWithValue("@name", name);
+                        await command.ExecuteNonQueryAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error in FirstTimeRegister: {ex.Message}");
+                    }
                 }
-                connLocal.Close();
+                connLocal.CloseAsync();
             }
             else
             {
@@ -253,11 +262,11 @@ namespace RPG
                 if (exists == null)
                 {
                     var sql = $@"
-        INSERT INTO `{table}` (`steamid`) VALUES (@SteamID) ON DUPLICATE KEY UPDATE `steamid` = @SteamID;
+        INSERT INTO `{table}` (`steamid`, `name`) VALUES (@SteamID, @name); ON DUPLICATE KEY UPDATE `name` = @name;
         ";
-                    await conn.ExecuteAsync(sql, new { SteamID });
+                    await conn.ExecuteAsync(sql, new { SteamID, name });
                 }
-                conn.Close();
+                conn.CloseAsync();
             }
         }
 
@@ -529,14 +538,14 @@ namespace RPG
                 try
                 {
                     await connLocal!.OpenAsync();
-                    var query = $@"SELECT level, name FROM {table} ORDER BY level DESC LIMIT 10;";
+                    var query = $@"SELECT name, level FROM {table} ORDER BY level DESC LIMIT 10;";
                     var command = new SqliteCommand(query, connLocal);
                     var reader = await command.ExecuteReaderAsync();
                     while (await reader.ReadAsync())
                     {
                         string playerName = reader.GetString(0);
                         int score = reader.GetInt32(1);
-                        top10.Add(playerName + " - level " + score);
+                        top10.Add($@"lvl {score} - {playerName}");
                     }
 
                     return top10;
@@ -628,20 +637,23 @@ namespace RPG
 
                 Server.NextFrame(() =>
                 {
-                    Task.Run(async () =>
+                    var task = Task.Run(async () => await storage!.GetTop10());
+                    task.Wait();
+                    var top10 = task.Result;
+
+                    if (top10.Count == 0) return;
+
+                    //CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Top10", this);
+                    player.PrintToChat($" {ChatColors.Gold}RPG Top10");
+                    player.PrintToChat($" {ChatColors.Green}----------------------------");
+                    for (int i = 0; i < top10.Count; i++)
                     {
-                        var top10 = await storage!.GetTop10();
-                        if (top10.Count == 0) return;
+                        //menu.AddMenuOption(top10[i], null, true);
 
-                        CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Top10", this);
-                        for (int i = 0; i < top10.Count; i++)
-                        {
-                            menu.AddMenuOption(top10[i], null, true);
-                        }
-
-                        MenuManager.OpenCenterHtmlMenu(this, player, menu);
-
-                    });
+                        player.PrintToChat($" {ChatColors.Gold}{top10[i]}");
+                    }
+                    player.PrintToChat($" {ChatColors.Green}----------------------------");
+                    //MenuManager.OpenCenterHtmlMenu(this, player, menu);
                 });
             }
 
@@ -965,7 +977,7 @@ namespace RPG
                             {
                                 Task.Run(async () =>
                                 {
-                                    await storage.FirstTimeRegister(confirmationPlayer.SteamID);
+                                    await storage.FirstTimeRegister(confirmationPlayer.SteamID, confirmationPlayer.PlayerName);
 
                                 }).ContinueWith(task =>
                                 {
@@ -1008,6 +1020,7 @@ namespace RPG
                 bUsingAdrenaline.Add(player.UserId, null);
                 jumping.Add(player.UserId, null);
                 ulong steamID64 = player.SteamID;
+                var name = player.PlayerName;
 
                 if (storage == null)
                 {
@@ -1021,7 +1034,7 @@ namespace RPG
                 {
                     Task.Run(async () =>
                     {
-                        await storage.FirstTimeRegister(steamID64);
+                        await storage.FirstTimeRegister(steamID64, name);
 
                     }).ContinueWith(task =>
                     {
