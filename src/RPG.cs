@@ -8,14 +8,13 @@ using CounterStrikeSharp.API;
 using static Dapper.SqlMapper;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
-using CounterStrikeSharp.API.Modules.Entities;
 using CounterStrikeSharp.API.Modules.Timers;
-using System.Numerics;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands.Targeting;
-using Microsoft.Extensions.Logging;
-using YamlDotNet.Core.Tokens;
+using CounterStrikeSharp.API.Modules.Entities;
+using System.Threading.Tasks;
+using System.Reflection.Emit;
 
 public class ConfigGen : BasePluginConfig
 {
@@ -55,6 +54,20 @@ public class ConfigGen : BasePluginConfig
     [JsonPropertyName("TimeForApplyHP")] public int TimeForApplyHP { get; set; } = 0;
     [JsonPropertyName("ApplyJumpTimer")] public float ApplyJumpTimer { get; set; } = 0.01f;
     [JsonPropertyName("JumpDuration")] public float JumpDuration { get; set; } = 0.5f;
+    [JsonPropertyName("CreditsEarnedPerLevel")] public int CreditsEarnedPerLevel { get; set; } = 500;
+    [JsonPropertyName("CreditsStart")] public int CreditsStart { get; set; } = 0;
+    [JsonPropertyName("UpgradeCostIncreasedHP")] public int UpgradeCostIncreasedHP { get; set; } = 500;
+    [JsonPropertyName("UpgradeCostIncreasedSpeed")] public int UpgradeCostIncreasedSpeed { get; set; } = 500;
+    [JsonPropertyName("UpgradeCostIncreasedJump")] public int UpgradeCostIncreasedJump { get; set; } = 500;
+    [JsonPropertyName("UpgradeCostIncreasedKnifeDamage")] public int UpgradeCostIncreasedKnifeDamage { get; set; } = 500;
+    [JsonPropertyName("UpgradeCostIncreasedGrenadeDamage")] public int UpgradeCostIncreasedGrenadeDamage { get; set; } = 500;
+    [JsonPropertyName("UpgradeCostIncreasedAdrenaline")] public int UpgradeCostIncreasedAdrenaline { get; set; } = 500;
+    [JsonPropertyName("DisableHealth")] public bool DisableHealth { get; set; } = false;
+    [JsonPropertyName("DisableSpeed")] public bool DisableSpeed { get; set; } = false;
+    [JsonPropertyName("DisableJump")] public bool DisableJump { get; set; } = false;
+    [JsonPropertyName("DisableKnifeDamage")] public bool DisableKnifeDamage { get; set; } = false;
+    [JsonPropertyName("DisableGrenadeDamage")] public bool DisableGrenadeDamage { get; set; } = false;
+    [JsonPropertyName("DisableAdrenaline")] public bool DisableAdrenaline { get; set; } = false;
 }
 
 namespace RPG
@@ -124,7 +137,7 @@ namespace RPG
 
         private MySqlConnection? conn;
         private SqliteConnection? connLocal;
-        public MySQLStorage(string ip, int port, string user, string password, string database, string table, bool isSQLite, string sqliteFilePath, int xPLevel)
+        public MySQLStorage(string ip, int port, string user, string password, string database, string table, bool isSQLite, string sqliteFilePath, int xPLevel, int startCredits)
         {
             string connectStr = $"server={ip};port={port};user={user};password={password};database={database};";
             this.ip = ip;
@@ -149,6 +162,7 @@ namespace RPG
                 var query = $@"
                 CREATE TABLE IF NOT EXISTS `{table}` (
                 steamid INTEGER PRIMARY KEY,
+                name varchar(64) NOT NULL,
                 kills INTEGER NOT NULL DEFAULT 0,
                 deaths INTEGER NOT NULL DEFAULT 0,
                 survivals INTEGER NOT NULL DEFAULT 0,
@@ -159,7 +173,7 @@ namespace RPG
                 zombieinfections INTEGER NOT NULL DEFAULT 0,
                 points INTEGER NOT NULL DEFAULT 0,
                 pointscalc INTEGER NOT NULL DEFAULT 0,       
-                skillavailable INTEGER NOT NULL DEFAULT 0,
+                skillavailable INTEGER NOT NULL DEFAULT {startCredits},
                 skillone INTEGER NOT NULL DEFAULT 0,
                 skilltwo INTEGER NOT NULL DEFAULT 0,
                 skillthree INTEGER NOT NULL DEFAULT 0,
@@ -169,12 +183,7 @@ namespace RPG
                 skillseven INTEGER NOT NULL DEFAULT 0,
                 skilleight INTEGER NOT NULL DEFAULT 0,
                 skillnine INTEGER NOT NULL DEFAULT 0,      
-                level INTEGER NOT NULL DEFAULT 1,
-                rank INTEGER NOT NULL DEFAULT 0,
-                skin TEXT,
-                class TEXT,
-                zclass TEXT,
-                hclass TEXT     
+                level INTEGER NOT NULL DEFAULT 1
                 );";
 
                 using (SqliteCommand command = new SqliteCommand(query, connLocal))
@@ -189,6 +198,7 @@ namespace RPG
                 conn.Execute($@"
                 CREATE TABLE IF NOT EXISTS `{table}` (
                     `steamid` varchar(64) NOT NULL PRIMARY KEY,
+                    `name` varchar(64) NOT NULL,
                     `kills` bigint NOT NULL DEFAULT 0,
                     `deaths` bigint NOT NULL DEFAULT 0,
                     `survivals` bigint NOT NULL DEFAULT 0,
@@ -199,7 +209,7 @@ namespace RPG
                     `zombieinfections` bigint NOT NULL DEFAULT 0,
                     `points` bigint NOT NULL DEFAULT 0,
                     `pointscalc` bigint NOT NULL DEFAULT 0,       
-                    `skillavailable` bigint NOT NULL DEFAULT 0,
+                    `skillavailable` bigint NOT NULL DEFAULT {startCredits},
                     `skillone` int NOT NULL DEFAULT 0,
                     `skilltwo` int NOT NULL DEFAULT 0,
                     `skillthree` int NOT NULL DEFAULT 0,
@@ -210,15 +220,11 @@ namespace RPG
                     `skilleight` int NOT NULL DEFAULT 0,
                     `skillnine` int NOT NULL DEFAULT 0,      
                     `level` bigint NOT NULL DEFAULT 1,
-                    `rank` bigint NOT NULL DEFAULT 0,
-                    `skin` TEXT,
-                    `class` TEXT,
-                    `zclass` TEXT,
-                    `hclass` TEXT        
+                    `rank` bigint NOT NULL DEFAULT 0
                 );");
             }
         }
-        public async Task FirstTimeRegister(ulong SteamID)
+        public async Task FirstTimeRegister(ulong SteamID, string name)
         {
             if (isSQLite)
             {
@@ -231,14 +237,22 @@ namespace RPG
                 var exists = await connLocal.QueryFirstOrDefaultAsync($"SELECT steamid FROM {table} WHERE steamid = @SteamID", new { SteamID });
                 if (exists == null)
                 {
-                    var query = $@"
-        INSERT OR IGNORE INTO `{table}` (`steamid`) VALUES (@SteamID);
+                    try
+                    {
+                        var query = $@"
+        INSERT OR IGNORE INTO `{table}` (`steamid`, `name`) VALUES (@SteamID, @name);
         ";
-                    var command = new SqliteCommand(query, connLocal);
-                    command.Parameters.AddWithValue("@SteamID", SteamID);
-                    await command.ExecuteNonQueryAsync();
+                        var command = new SqliteCommand(query, connLocal);
+                        command.Parameters.AddWithValue("@SteamID", SteamID);
+                        command.Parameters.AddWithValue("@name", name);
+                        await command.ExecuteNonQueryAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error in FirstTimeRegister: {ex.Message}");
+                    }
                 }
-                connLocal.Close();
+                connLocal.CloseAsync();
             }
             else
             {
@@ -248,11 +262,11 @@ namespace RPG
                 if (exists == null)
                 {
                     var sql = $@"
-        INSERT INTO `{table}` (`steamid`) VALUES (@SteamID) ON DUPLICATE KEY UPDATE `steamid` = @SteamID;
+        INSERT INTO `{table}` (`steamid`, `name`) VALUES (@SteamID, @name); ON DUPLICATE KEY UPDATE `name` = @name;
         ";
-                    await conn.ExecuteAsync(sql, new { SteamID });
+                    await conn.ExecuteAsync(sql, new { SteamID, name });
                 }
-                conn.Close();
+                conn.CloseAsync();
             }
         }
 
@@ -273,19 +287,15 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
-                    {
-                        await conn.OpenAsync();
-                        var sql = $@"DELETE FROM {table} WHERE steamid = @SteamID;";
-                        await conn.ExecuteAsync(sql, new { SteamID = steamID });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error in UpdateDb: {ex.Message}");
-                    }
+                    await conn.OpenAsync();
+                    var sql = $@"DELETE FROM {table} WHERE steamid = @SteamID;";
+                    await conn.ExecuteAsync(sql, new { SteamID = steamID });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in UpdateDb: {ex.Message}");
                 }
             }
         }
@@ -307,19 +317,15 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
-                    {
-                        await conn.OpenAsync();
-                        var sql = $@"UPDATE `{table}` SET {columnName} = {columnName} + @Value WHERE `steamid` = @SteamID;";
-                        await conn.ExecuteAsync(sql, new { SteamID = steamID, Value = value });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error in UpdateDb: {ex.Message}");
-                    }
+                    await conn.OpenAsync();
+                    var sql = $@"UPDATE `{table}` SET {columnName} = {columnName} + @Value WHERE `steamid` = @SteamID;";
+                    await conn.ExecuteAsync(sql, new { SteamID = steamID, Value = value });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in UpdateDb: {ex.Message}");
                 }
             }
 
@@ -341,19 +347,15 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
-                    {
-                        await conn.OpenAsync();
-                        var sql = $@"UPDATE `{table}` SET {columnName} = @Value WHERE `steamid` = @SteamID;";
-                        await conn.ExecuteAsync(sql, new { SteamID = steamID, Value = value });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error in SetDb: {ex.Message}");
-                    }
+                    await conn.OpenAsync();
+                    var sql = $@"UPDATE `{table}` SET {columnName} = @Value WHERE `steamid` = @SteamID;";
+                    await conn.ExecuteAsync(sql, new { SteamID = steamID, Value = value });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in SetDb: {ex.Message}");
                 }
             }
 
@@ -375,19 +377,15 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
-                    {
-                        await conn.OpenAsync();
-                        var sql = $@"UPDATE `{table}` SET {columnName} = @NewValue WHERE `steamid` = @SteamID;";
-                        await conn.ExecuteAsync(sql, new { SteamID = steamID, NewValue = newValue });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error in UpdateTxtDb: {ex.Message}");
-                    }
+                    await conn.OpenAsync();
+                    var sql = $@"UPDATE `{table}` SET {columnName} = @NewValue WHERE `steamid` = @SteamID;";
+                    await conn.ExecuteAsync(sql, new { SteamID = steamID, NewValue = newValue });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in UpdateTxtDb: {ex.Message}");
                 }
             }
         }
@@ -411,21 +409,17 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
-                    {
-                        await conn.OpenAsync();
-                        var sql = $@"SELECT `{columnName}` FROM `{table}` WHERE `steamid` = @SteamID;";
-                        var attributeValue = await conn.QueryFirstOrDefaultAsync<int?>(sql, new { SteamID = steamID });
-                        return attributeValue ?? 0;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error in GetPlayerIntAttribute: {ex.Message}");
-                        return 0;
-                    }
+                    await conn.OpenAsync();
+                    var sql = $@"SELECT `{columnName}` FROM `{table}` WHERE `steamid` = @SteamID;";
+                    var attributeValue = await conn.QueryFirstOrDefaultAsync<int?>(sql, new { SteamID = steamID });
+                    return attributeValue ?? 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in GetPlayerIntAttribute: {ex.Message}");
+                    return 0;
                 }
             }
         }
@@ -448,21 +442,17 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
-                    {
-                        await conn.OpenAsync();
-                        var sql = $@"SELECT `{columnName}` FROM `{table}` WHERE `steamid` = @SteamID;";
-                        var attributeValue = await conn.QueryFirstOrDefaultAsync<string>(sql, new { SteamID = steamID });
-                        return attributeValue ?? string.Empty; // Return an empty string if null to avoid returning null
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error in GetPlayerAttribute: {ex.Message}");
-                        return string.Empty; // Return an empty string in case of an exception
-                    }
+                    await conn.OpenAsync();
+                    var sql = $@"SELECT `{columnName}` FROM `{table}` WHERE `steamid` = @SteamID;";
+                    var attributeValue = await conn.QueryFirstOrDefaultAsync<string>(sql, new { SteamID = steamID });
+                    return attributeValue ?? string.Empty; // Return an empty string if null to avoid returning null
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in GetPlayerAttribute: {ex.Message}");
+                    return string.Empty; // Return an empty string in case of an exception
                 }
             }
         }
@@ -487,22 +477,18 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
-                    {
-                        await conn.OpenAsync();
-                        var sql = $@"SELECT skillone AS Skill1Points, skilltwo AS Skill2Points, skillthree AS Skill3Points, skillfour AS Skill4Points, skillfive AS Skill5Points, skillsix AS Skill6Points, skillavailable AS AvailablePoints FROM {table} WHERE steamid = @SteamID;";
-                        var playerSkills = await conn.QueryFirstOrDefaultAsync<PlayerSkills>(sql, new { SteamID = steamID });
+                    await conn.OpenAsync();
+                    var sql = $@"SELECT skillone AS Skill1Points, skilltwo AS Skill2Points, skillthree AS Skill3Points, skillfour AS Skill4Points, skillfive AS Skill5Points, skillsix AS Skill6Points, skillavailable AS AvailablePoints FROM {table} WHERE steamid = @SteamID;";
+                    var playerSkills = await conn.QueryFirstOrDefaultAsync<PlayerSkills>(sql, new { SteamID = steamID });
 
-                        return playerSkills ?? new PlayerSkills();
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error in LoadPlayerSkillsFromDatabase: {ex.Message}");
-                        return new PlayerSkills(); // Return an empty object to avoid null reference exceptions
-                    }
+                    return playerSkills ?? new PlayerSkills();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in LoadPlayerSkillsFromDatabase: {ex.Message}");
+                    return new PlayerSkills(); // Return an empty object to avoid null reference exceptions
                 }
             }
         }
@@ -527,300 +513,339 @@ namespace RPG
             }
             else
             {
-                var connectionString = $"server={ip};port={port};user={user};password={password}:;database={database};";
-                using (var conn = new MySqlConnection(connectionString))
+                try
                 {
-                    try
+                    await conn.OpenAsync();
+                    var points = await conn.QueryFirstOrDefaultAsync<int>($@"SELECT `pointscalc` FROM `{table}` WHERE `steamid` = @SteamID;", new { SteamID = steamID });
+                    if (points >= XPLevel)
                     {
-                        await conn.OpenAsync();
-                        var points = await conn.QueryFirstOrDefaultAsync<int>($@"SELECT `pointscalc` FROM `{table}` WHERE `steamid` = @SteamID;", new { SteamID = steamID });
-                        if (points >= XPLevel)
-                        {
-                            return true;
-                        }
+                        return true;
                     }
-                    catch (Exception ex)
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in CheckUpdateRankUp: {ex.Message}");
+                }
+                return false;
+            }
+        }
+
+        public async Task<List<string>> GetTop10()
+        {
+            List<string> top10 = new List<string>();
+            if (isSQLite)
+            {
+                try
+                {
+                    await connLocal!.OpenAsync();
+                    var query = $@"SELECT name, level FROM {table} ORDER BY level DESC LIMIT 10;";
+                    var command = new SqliteCommand(query, connLocal);
+                    var reader = await command.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
                     {
-                        Console.WriteLine($"Error in CheckUpdateRankUp: {ex.Message}");
+                        string playerName = reader.GetString(0);
+                        int score = reader.GetInt32(1);
+                        top10.Add($@"lvl {score} - {playerName}");
                     }
-                    return false;
+
+                    return top10;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in GetTop10: {ex.Message}");
                 }
             }
-        }
-
-    }
-    public class RPG : BasePlugin, IPluginConfig<ConfigGen>
-    {
-        public ConfigGen Config { get; set; } = null!;
-        public void OnConfigParsed(ConfigGen config) { Config = config; }
-
-        private MySQLStorage? storage;
-        public override string ModuleName => "RPG";
-        public override string ModuleVersion => "1.0 - 2/04/2024a";
-        public override string ModuleAuthor => "Franc1sco Franug";
-
-        private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
-        private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> jumping = new();
-        public override void Load(bool hotReload)
-        {
-            storage = new MySQLStorage(
-                Config.DatabaseHost,
-                Config.DatabasePort,
-                Config.DatabaseUser,
-                Config.DatabasePassword,
-                Config.DatabaseName,
-                Config.DatabaseTable,
-                Config.DatabaseType == "SQLite",
-                Config.DatabaseFilePath,
-                Config.XPLevel
-            );
-            base.Load(hotReload);
-            RegisterEventHandler<EventPlayerConnectFull>(OnPlayerConnectFull);
-            RegisterEventHandler<EventPlayerDisconnect>(OnPlayerConnectDisconnect);
-            RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect, HookMode.Pre);
-            RegisterEventHandler<EventPlayerHurt>(OnPlayerHurtMultiplier, HookMode.Pre);
-            RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath, HookMode.Pre);
-            RegisterEventHandler<EventPlayerJump>(OnPlayerJump);
-            RegisterEventHandler<EventPlayerJump>(OnPlayerJumpPre, HookMode.Pre);
-            RegisterEventHandler<EventPlayerSpawn>(eventPlayerSpawn);
-            RegisterEventHandler<EventWeaponFire>(eventWeaponFire);
-
-            AddCommand("skills", "Opens menu to upgrade skills", OnSkillsCommand);
-            AddCommand("showskills", "show skills in chat", OnShowskillsCommand);
-            AddCommand("showstats", "show stats in chat", OnShowstatsCommand);
-            AddCommand("sellskills", "sell stats menu", OnSellSkillsCommand);
-
-            AddCommand("rpgmenu", "show rpgmenu", OnRPGCommand);
-
-
-
-            if (hotReload)
+            else
             {
-                AddTimer(2.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+                try
+                {
+                    await conn!.OpenAsync();
+                    var query = $@"SELECT level, name FROM {table} ORDER BY level DESC LIMIT 10;";
+                    var command = new MySqlCommand(query, conn);
+                    var reader = await command.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        string playerName = reader.GetString(0);
+                        int score = reader.GetInt32(1);
+                        top10.Add(playerName + " - level " + score);
+                    }
+
+                    return top10;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in GetTop10: {ex.Message}");
+                }
             }
-            RegisterListener<Listeners.OnMapStart>(OnMapStartEvent);
-
+            return top10;
         }
-
-        private HookResult eventWeaponFire(EventWeaponFire @event, GameEventInfo info)
+        public class RPG : BasePlugin, IPluginConfig<ConfigGen>
         {
+            public ConfigGen Config { get; set; } = null!;
+            public void OnConfigParsed(ConfigGen config) { Config = config; }
 
-            if (Config.AdrenalineOnlyOnHit) return HookResult.Continue;
+            private MySQLStorage? storage;
+            public override string ModuleName => "RPG";
+            public override string ModuleVersion => "1.1 - 11/05/2024a";
+            public override string ModuleAuthor => "Franc1sco Franug";
 
-            var player = @event.Userid;
-
-            if (!IsPlayerValid(player))
+            private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> bUsingAdrenaline = new();
+            private readonly Dictionary<int?, CounterStrikeSharp.API.Modules.Timers.Timer?> jumping = new();
+            public override void Load(bool hotReload)
             {
+                storage = new MySQLStorage(
+                    Config.DatabaseHost,
+                    Config.DatabasePort,
+                    Config.DatabaseUser,
+                    Config.DatabasePassword,
+                    Config.DatabaseName,
+                    Config.DatabaseTable,
+                    Config.DatabaseType == "SQLite",
+                    Config.DatabaseFilePath,
+                    Config.XPLevel,
+                    Config.CreditsStart
+                );
+                base.Load(hotReload);
+                RegisterEventHandler<EventPlayerConnectFull>(OnPlayerConnectFull);
+                RegisterEventHandler<EventPlayerDisconnect>(OnPlayerConnectDisconnect);
+                RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect, HookMode.Pre);
+                RegisterEventHandler<EventPlayerHurt>(OnPlayerHurtMultiplier, HookMode.Pre);
+                RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath, HookMode.Pre);
+                RegisterEventHandler<EventPlayerJump>(OnPlayerJump);
+                RegisterEventHandler<EventPlayerJump>(OnPlayerJumpPre, HookMode.Pre);
+                RegisterEventHandler<EventPlayerSpawn>(eventPlayerSpawn);
+                RegisterEventHandler<EventWeaponFire>(eventWeaponFire);
+
+                AddCommand("skills", "Opens menu to upgrade skills", OnSkillsCommand);
+                AddCommand("showskills", "show skills in chat", OnShowskillsCommand);
+                AddCommand("showstats", "show stats in chat", OnShowstatsCommand);
+                AddCommand("sellskills", "sell stats menu", OnSellSkillsCommand);
+
+                AddCommand("rpgmenu", "show rpgmenu", OnRPGCommand);
+                AddCommand("rpgtop10", "show rpg top10", OnRPGTop);
+
+                if (hotReload)
+                {
+                    AddTimer(2.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+                }
+                RegisterListener<Listeners.OnMapStart>(OnMapStartEvent);
+            }
+
+            private void OnRPGTop(CCSPlayerController? player, CommandInfo commandInfo)
+            {
+                if (player == null || !player.IsValid || player.IsBot) return;
+
+                Server.NextFrame(() =>
+                {
+                    var task = Task.Run(async () => await storage!.GetTop10());
+                    task.Wait();
+                    var top10 = task.Result;
+
+                    if (top10.Count == 0) return;
+
+                    //CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Top10", this);
+                    player.PrintToChat($" {ChatColors.Gold}RPG Top10");
+                    player.PrintToChat($" {ChatColors.Green}----------------------------");
+                    for (int i = 0; i < top10.Count; i++)
+                    {
+                        //menu.AddMenuOption(top10[i], null, true);
+
+                        player.PrintToChat($" {ChatColors.Gold}{top10[i]}");
+                    }
+                    player.PrintToChat($" {ChatColors.Green}----------------------------");
+                    //MenuManager.OpenCenterHtmlMenu(this, player, menu);
+                });
+            }
+
+            private HookResult eventWeaponFire(EventWeaponFire @event, GameEventInfo info)
+            {
+
+                if (Config.AdrenalineOnlyOnHit || Config.DisableAdrenaline) return HookResult.Continue;
+
+                var player = @event.Userid;
+
+                if (!IsPlayerValid(player))
+                {
+                    return HookResult.Continue;
+                }
+
+                applyAdrenaline(player);
+
                 return HookResult.Continue;
             }
 
-            applyAdrenaline(player);
-
-            return HookResult.Continue;
-        }
-
-        private void OnMapStartEvent(string mapName)
-        {
-            AddTimer(2.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
-        }
-
-        private void TimerCheckVelocity()
-        {
-            List<CCSPlayerController> players = Utilities.GetPlayers();
-
-            foreach (CCSPlayerController player in players)
+            private void OnMapStartEvent(string mapName)
             {
-                if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive
-                    || player.IsBot) continue;
+                AddTimer(2.0f, TimerCheckVelocity, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+            }
 
-                if (storage != null && !playerSkillsCache.ContainsKey(player.SteamID))
+            private void TimerCheckVelocity()
+            {
+                List<CCSPlayerController> players = Utilities.GetPlayers();
+
+                foreach (CCSPlayerController player in players)
                 {
-                    connectedUser(player);
-                    continue;
-                }
+                    if (player == null || !player.IsValid || player.IsHLTV || player.SteamID.ToString() == "" || !player.PawnIsAlive
+                        || player.IsBot) continue;
 
-                if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] == null)
-                {
-                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
-
-                    if (speedPoints >= 1)
+                    if (storage != null && !playerSkillsCache.ContainsKey(player.SteamID))
                     {
-                        var playerPawn = player.PlayerPawn.Value;
-                        if (playerPawn == null || !playerPawn.IsValid) return;
+                        connectedUser(player);
+                        continue;
+                    }
 
-                        if (bUsingAdrenaline.ContainsKey(player.UserId) && bUsingAdrenaline[player.UserId] != null)
+                    if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] == null)
+                    {
+                        var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                        if (speedPoints >= 1 && !Config.DisableSpeed)
                         {
-                            var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
+                            var playerPawn = player.PlayerPawn.Value;
+                            if (playerPawn == null || !playerPawn.IsValid) return;
 
+                            if (bUsingAdrenaline.ContainsKey(player.UserId) && bUsingAdrenaline[player.UserId] != null)
+                            {
+                                var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
 
-
-                            SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
-                        }
-                        else
-                        {
-                            SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                                SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
+                            }
+                            else
+                            {
+                                SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                            }
                         }
                     }
                 }
             }
-        }
-        private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
-        {
-            if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
-                && !@event.Headshot && @event.Weapon != "hegrenade" && @event.Attacker != @event.Userid) // simple kill
+            private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
             {
-                var steamid = @event.Attacker.SteamID;
-                storage?.UpdateDb(steamid, "kills", 1);
-                storage?.UpdateDb(steamid, "points", Config.NormalKillXP);
-                storage?.UpdateDb(steamid, "pointscalc", Config.NormalKillXP);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.NormalKillXP} xp {ChatColors.Gold}for a kill{ChatColors.Gold}.");
-                RankUpPlayerOrNo(@event.Attacker);
-            }
-            if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Userid.IsBot) // simple death
-            {
-                var steamid = @event.Userid.SteamID;
-                storage?.UpdateDb(steamid, "deaths", 1);
-            }
-            if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
-                && @event.Headshot && IsCT(@event.Attacker) && @event.Attacker != @event.Userid) // headshot kill
-            {
-                var steamid = @event.Attacker.SteamID;
-                storage?.UpdateDb(steamid, "points", Config.HSKillXP);
-                storage?.UpdateDb(steamid, "pointscalc", Config.HSKillXP);
-                storage?.UpdateDb(steamid, "headshot", 1);
-                storage?.UpdateDb(steamid, "kills", 1);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.HSKillXP} xp {ChatColors.Gold}for a headshot kill{ChatColors.Gold}.");
-                RankUpPlayerOrNo(@event.Attacker);
-            }
-            /*if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
-                && @event.Weapon == "knife" && IsCT(@event.Attacker) && @event.Attacker != @event.Userid) // knife kill
-            {
-                var steamid = @event.Attacker.SteamID;
-                storage?.UpdateDb(steamid, "points", Config.KnifeKillXP);
-                storage?.UpdateDb(steamid, "pointscalc", Config.KnifeKillXP);
-                storage?.UpdateDb(steamid, "knifekills", 1);
-                storage?.UpdateDb(steamid, "kills", 1);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.KnifeKillXP} xp {ChatColors.Gold}for a knife kill{ChatColors.Gold}.");
-                RankUpPlayerOrNo(@event.Attacker);
-            }*/
-            if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
-                && @event.Weapon == "hegrenade" && @event.Attacker != @event.Userid) // grenade kill
-            {
-                var steamid = @event.Attacker.SteamID;
-                storage?.UpdateDb(steamid, "points", Config.GrenadeKillXP);
-                storage?.UpdateDb(steamid, "pointscalc", Config.GrenadeKillXP);
-                storage?.UpdateDb(steamid, "grenadekills", 1);
-                storage?.UpdateDb(steamid, "kills", 1);
-                @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.GrenadeKillXP} xp {ChatColors.Gold}for a grenade kill{ChatColors.Gold}.");
-                RankUpPlayerOrNo(@event.Attacker);
-            }
-
-            return HookResult.Continue;
-        }
-        public void RankUpPlayerOrNo(CCSPlayerController player)
-        {
-            var steamid = player.SteamID;
-            if (storage != null)
-            {
-                bool canRankUp = storage.CheckUpdateRankUp(steamid).GetAwaiter().GetResult();
-                if (canRankUp)
+                if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
+                    && !@event.Headshot && @event.Weapon != "hegrenade" && @event.Attacker != @event.Userid) // simple kill
                 {
-                    storage?.UpdateDb(steamid, "level", 1);
-                    storage?.UpdateDb(steamid, "skillavailable", 1);
-                    storage?.SetDb(steamid, "pointscalc", 0);
-                    if (storage != null)
+                    var steamid = @event.Attacker.SteamID;
+                    storage?.UpdateDb(steamid, "kills", 1);
+                    storage?.UpdateDb(steamid, "points", Config.NormalKillXP);
+                    storage?.UpdateDb(steamid, "pointscalc", Config.NormalKillXP);
+                    @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.NormalKillXP} xp {ChatColors.Gold}for a kill{ChatColors.Gold}.");
+                    RankUpPlayerOrNo(@event.Attacker);
+                }
+                if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Userid.IsBot) // simple death
+                {
+                    var steamid = @event.Userid.SteamID;
+                    storage?.UpdateDb(steamid, "deaths", 1);
+                }
+                if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
+                    && @event.Headshot && IsCT(@event.Attacker) && @event.Attacker != @event.Userid) // headshot kill
+                {
+                    var steamid = @event.Attacker.SteamID;
+                    storage?.UpdateDb(steamid, "points", Config.HSKillXP);
+                    storage?.UpdateDb(steamid, "pointscalc", Config.HSKillXP);
+                    storage?.UpdateDb(steamid, "headshot", 1);
+                    storage?.UpdateDb(steamid, "kills", 1);
+                    @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.HSKillXP} xp {ChatColors.Gold}for a headshot kill{ChatColors.Gold}.");
+                    RankUpPlayerOrNo(@event.Attacker);
+                }
+                /*if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
+                    && @event.Weapon == "knife" && IsCT(@event.Attacker) && @event.Attacker != @event.Userid) // knife kill
+                {
+                    var steamid = @event.Attacker.SteamID;
+                    storage?.UpdateDb(steamid, "points", Config.KnifeKillXP);
+                    storage?.UpdateDb(steamid, "pointscalc", Config.KnifeKillXP);
+                    storage?.UpdateDb(steamid, "knifekills", 1);
+                    storage?.UpdateDb(steamid, "kills", 1);
+                    @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.KnifeKillXP} xp {ChatColors.Gold}for a knife kill{ChatColors.Gold}.");
+                    RankUpPlayerOrNo(@event.Attacker);
+                }*/
+                if (@event.Userid != null && @event.Userid.IsValid && @event.Attacker != null && @event.Attacker.IsValid && !@event.Attacker.IsBot
+                    && @event.Weapon == "hegrenade" && @event.Attacker != @event.Userid) // grenade kill
+                {
+                    var steamid = @event.Attacker.SteamID;
+                    storage?.UpdateDb(steamid, "points", Config.GrenadeKillXP);
+                    storage?.UpdateDb(steamid, "pointscalc", Config.GrenadeKillXP);
+                    storage?.UpdateDb(steamid, "grenadekills", 1);
+                    storage?.UpdateDb(steamid, "kills", 1);
+                    @event.Attacker.PrintToChat($" {ChatColors.Gold}You gained {ChatColors.Lime}{Config.GrenadeKillXP} xp {ChatColors.Gold}for a grenade kill{ChatColors.Gold}.");
+                    RankUpPlayerOrNo(@event.Attacker);
+                }
+
+                return HookResult.Continue;
+            }
+            public void RankUpPlayerOrNo(CCSPlayerController player)
+            {
+                var steamid = player.SteamID;
+                if (storage != null)
+                {
+                    bool canRankUp = storage.CheckUpdateRankUp(steamid).GetAwaiter().GetResult();
+                    if (canRankUp)
                     {
-                        int level = storage.GetPlayerIntAttribute(steamid, "level").GetAwaiter().GetResult();
-                        player.PrintToChat($" {ChatColors.Gold}You have leveled up! You are now {ChatColors.Lime}level {level}{ChatColors.Gold}.");
-                        player.PrintToChat($" {ChatColors.Gold}You earned a skill point for levelling up! Type {ChatColors.Lime}!skills{ChatColors.Gold} to use it.");
-                        BroadcastMessageToAllExcept(player, $" {ChatColors.Lime}{player.PlayerName} {ChatColors.Gold}have leveled up! He is now {ChatColors.Lime}level {level}{ChatColors.Gold}.");
+                        storage?.UpdateDb(steamid, "level", 1);
+                        storage?.UpdateDb(steamid, "skillavailable", Config.CreditsEarnedPerLevel);
+                        storage?.SetDb(steamid, "pointscalc", 0);
+                        if (storage != null)
+                        {
+                            int level = storage.GetPlayerIntAttribute(steamid, "level").GetAwaiter().GetResult();
+                            player.PrintToChat($" {ChatColors.Gold}You have leveled up! You are now {ChatColors.Lime}level {level}{ChatColors.Gold}.");
+                            player.PrintToChat($" {ChatColors.Gold}You earned {Config.CreditsEarnedPerLevel} credits for levelling up! Type {ChatColors.Lime}!skills{ChatColors.Gold} to use it.");
+                            BroadcastMessageToAllExcept(player, $" {ChatColors.Lime}{player.PlayerName} {ChatColors.Gold}have leveled up! He is now {ChatColors.Lime}level {level}{ChatColors.Gold}.");
+                        }
                     }
                 }
             }
-        }
-        public void BroadcastMessageToAllExcept(CCSPlayerController excludedPlayer, string message)
-        {
-            foreach (var player in Utilities.GetPlayers())
+            public void BroadcastMessageToAllExcept(CCSPlayerController excludedPlayer, string message)
             {
-                if (player != excludedPlayer && player.IsValid && !player.IsBot && player != null)
+                foreach (var player in Utilities.GetPlayers())
                 {
-                    player.PrintToChat(message);
+                    if (player != excludedPlayer && player.IsValid && !player.IsBot && player != null)
+                    {
+                        player.PrintToChat(message);
+                    }
                 }
             }
-        }
 
-        ///// ################### SKILLS START ################### /////
+            ///// ################### SKILLS START ################### /////
 
-        private Dictionary<ulong, PlayerSkills> playerSkillsCache = new Dictionary<ulong, PlayerSkills>();
-        private Dictionary<ulong, PlayerSkills> playerSkillsDictionary = new Dictionary<ulong, PlayerSkills>();
-        public async Task<PlayerSkills> LoadPlayerSkillsFromDatabase(ulong steamID)
-        {
-            if (storage != null)
+            private Dictionary<ulong, PlayerSkills> playerSkillsCache = new Dictionary<ulong, PlayerSkills>();
+            private Dictionary<ulong, PlayerSkills> playerSkillsDictionary = new Dictionary<ulong, PlayerSkills>();
+            public async Task<PlayerSkills> LoadPlayerSkillsFromDatabase(ulong steamID)
             {
-                return await storage.LoadPlayerSkillsFromDatabase(steamID);
-            }
-            else
-            {
-                return new PlayerSkills
+                if (storage != null)
                 {
-                    Skill1Points = 0,
-                    Skill2Points = 0,
-                    Skill3Points = 0,
-                    Skill4Points = 0,
-                    Skill5Points = 0,
-                    AvailablePoints = 0,
-                };
+                    return await storage.LoadPlayerSkillsFromDatabase(steamID);
+                }
+                else
+                {
+                    return new PlayerSkills
+                    {
+                        Skill1Points = 0,
+                        Skill2Points = 0,
+                        Skill3Points = 0,
+                        Skill4Points = 0,
+                        Skill5Points = 0,
+                        AvailablePoints = 0,
+                    };
+                }
             }
-        }
-        private void OnShowskillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
-        {
-            if (player == null || !player.IsValid || player.IsBot)
+            private void OnShowskillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
             {
-                return; // Check if the player object is valid and not a bot
-            }
+                if (player == null || !player.IsValid || player.IsBot)
+                {
+                    return; // Check if the player object is valid and not a bot
+                }
 
-            var steamid = player.SteamID;
+                var steamid = player.SteamID;
 
-            // Attempt to retrieve the player's skills from the cache
-            if (playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
-            {
-                // If found, print each skill and its points
-                player.PrintToChat($"{ChatColors.Green}[Skills]{ChatColors.Gold} Your skills are:");
-                player.PrintToChat($" {ChatColors.Gold}Health: {ChatColors.Lime}{playerSkills.Skill1Points}/{Config.MaxLevel}");
-                player.PrintToChat($" {ChatColors.Gold}Speed: {ChatColors.Lime}{playerSkills.Skill2Points}/{Config.MaxLevelSpeed}");
-                player.PrintToChat($" {ChatColors.Gold}Jump: {ChatColors.Lime}{playerSkills.Skill3Points}/{Config.MaxLevel}");
-                player.PrintToChat($" {ChatColors.Gold}Knife Damage: {ChatColors.Lime}{playerSkills.Skill4Points}/{Config.MaxLevel}");
-                player.PrintToChat($" {ChatColors.Gold}Grenade Damage: {ChatColors.Lime}{playerSkills.Skill5Points}/{Config.MaxLevel}");
-                player.PrintToChat($" {ChatColors.Gold}Adrenaline: {ChatColors.Lime}{playerSkills.Skill6Points}/{Config.MaxLevelAdrenaline}");
-                player.PrintToChat($" {ChatColors.Green}Available Skill Points: {ChatColors.Lime}{playerSkills.AvailablePoints}");
-            }
-            else
-            {
-                // If not found in cache, you might want to load from database or display an error
-                // This is just an error message, implement loading from DB as needed
-                player.PrintToChat($"{ChatColors.Red}Error: Could not retrieve your skills. Please try again.");
-            }
-        } // for debugging, to see if dictionary contains the right values
-
-        private void OnShowstatsCommand(CCSPlayerController? player, CommandInfo commandInfo)
-        {
-            if (player == null || !player.IsValid || player.IsBot)
-            {
-                return; // Check if the player object is valid and not a bot
-            }
-
-            var steamid = player.SteamID;
-            if (storage != null)
-            {
-                int level = storage.GetPlayerIntAttribute(steamid, "level").GetAwaiter().GetResult();
-                int pointscalc = storage.GetPlayerIntAttribute(steamid, "pointscalc").GetAwaiter().GetResult();
                 // Attempt to retrieve the player's skills from the cache
                 if (playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
                 {
-                    // If found, print each stat and its xp
-                    player.PrintToChat($"{ChatColors.Green}[Skills]{ChatColors.Gold} Your current stats:");
-                    player.PrintToChat($" {ChatColors.Gold} Your current lvl is: {level}");
-                    player.PrintToChat($" {ChatColors.Gold} Your current xp is: {pointscalc} / {Config.XPLevel}");
+                    // If found, print each skill and its points
+                    player.PrintToChat($"{ChatColors.Green}[Skills]{ChatColors.Gold} Your skills are:");
+                    player.PrintToChat($" {ChatColors.Gold}Health: {ChatColors.Lime}{playerSkills.Skill1Points}/{Config.MaxLevel}");
+                    player.PrintToChat($" {ChatColors.Gold}Speed: {ChatColors.Lime}{playerSkills.Skill2Points}/{Config.MaxLevelSpeed}");
+                    player.PrintToChat($" {ChatColors.Gold}Jump: {ChatColors.Lime}{playerSkills.Skill3Points}/{Config.MaxLevel}");
+                    player.PrintToChat($" {ChatColors.Gold}Knife Damage: {ChatColors.Lime}{playerSkills.Skill4Points}/{Config.MaxLevel}");
+                    player.PrintToChat($" {ChatColors.Gold}Grenade Damage: {ChatColors.Lime}{playerSkills.Skill5Points}/{Config.MaxLevel}");
+                    player.PrintToChat($" {ChatColors.Gold}Adrenaline: {ChatColors.Lime}{playerSkills.Skill6Points}/{Config.MaxLevelAdrenaline}");
+                    player.PrintToChat($" {ChatColors.Green}Available Skill Points: {ChatColors.Lime}{playerSkills.AvailablePoints}");
                 }
                 else
                 {
@@ -828,269 +853,249 @@ namespace RPG
                     // This is just an error message, implement loading from DB as needed
                     player.PrintToChat($"{ChatColors.Red}Error: Could not retrieve your skills. Please try again.");
                 }
-            }
-        }
-        private async void OnSkillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
-        {
-            if (player == null || !player.IsValid || player.IsBot) return;
-            var steamid = player.SteamID;
-            if (storage != null)
+            } // for debugging, to see if dictionary contains the right values
+
+            private void OnShowstatsCommand(CCSPlayerController? player, CommandInfo commandInfo)
             {
-                int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
-                int healthPoints = await storage.GetPlayerIntAttribute(steamid, "skillone");
-                int speedPoints = await storage.GetPlayerIntAttribute(steamid, "skilltwo");
-                int jumpPoints = await storage.GetPlayerIntAttribute(steamid, "skillthree");
-                int knifeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfour");
-                int GrenaeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfive");
-                int adrenalinePoints = await storage.GetPlayerIntAttribute(steamid, "skillsix");
-
-                Server.NextFrame(() =>
+                if (player == null || !player.IsValid || player.IsBot)
                 {
-                    CenterHtmlMenu menu = new CenterHtmlMenu($"Skills Menu");
-                    menu.Title = $"<font color='lightblue'>Available Skill Points : <font color='pink'>{availablePoints}<br><font color='yellow'>Upgrade your Skills :<font color='white'><font color='white'>";
-                    menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Health", "skillone", commandInfo));
-                    menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}]", (p, option) => UpdateSkill(p, "Speed", "skilltwo", commandInfo));
-                    menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Jump", "skillthree", commandInfo));
-                    menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Knife Damage", "skillfour", commandInfo));
-                    menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => UpdateSkill(p, "Grenade Damage", "skillfive", commandInfo));
-                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}]", (p, option) => UpdateSkill(p, "Adrenaline", "skillsix", commandInfo));
-                    MenuManager.OpenCenterHtmlMenu(this, player, menu);
-                });
+                    return; // Check if the player object is valid and not a bot
+                }
+
+                var steamid = player.SteamID;
+                if (storage != null)
+                {
+                    int level = storage.GetPlayerIntAttribute(steamid, "level").GetAwaiter().GetResult();
+                    int pointscalc = storage.GetPlayerIntAttribute(steamid, "pointscalc").GetAwaiter().GetResult();
+                    // Attempt to retrieve the player's skills from the cache
+                    if (playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
+                    {
+                        // If found, print each stat and its xp
+                        player.PrintToChat($"{ChatColors.Green}[Skills]{ChatColors.Gold} Your current stats:");
+                        player.PrintToChat($" {ChatColors.Gold} Your current lvl is: {level}");
+                        player.PrintToChat($" {ChatColors.Gold} Your current xp is: {pointscalc} / {Config.XPLevel}");
+                    }
+                    else
+                    {
+                        // If not found in cache, you might want to load from database or display an error
+                        // This is just an error message, implement loading from DB as needed
+                        player.PrintToChat($"{ChatColors.Red}Error: Could not retrieve your skills. Please try again.");
+                    }
+                }
             }
-        }
-        private async void OnSellSkillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
-        {
-            if (player == null || !player.IsValid || player.IsBot) return;
-            var steamid = player.SteamID;
-            if (storage != null)
+            private async void OnSkillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
             {
-                int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
-                int healthPoints = await storage.GetPlayerIntAttribute(steamid, "skillone");
-                int speedPoints = await storage.GetPlayerIntAttribute(steamid, "skilltwo");
-                int jumpPoints = await storage.GetPlayerIntAttribute(steamid, "skillthree");
-                int knifeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfour");
-                int GrenaeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfive");
-                int adrenalinePoints = await storage.GetPlayerIntAttribute(steamid, "skillsix");
-
-                Server.NextFrame(() =>
+                if (player == null || !player.IsValid || player.IsBot) return;
+                var steamid = player.SteamID;
+                if (storage != null)
                 {
-                    CenterHtmlMenu menu = new CenterHtmlMenu($"Sell Skills Menu");
-                    menu.Title = $"<font color='lightblue'>Available Skill Points : <font color='pink'>{availablePoints}<br><font color='yellow'>Sell your Skills :<font color='white'><font color='white'>";
-                    menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Health", "skillone", commandInfo));
-                    menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}]", (p, option) => SellSkill(p, "Speed", "skilltwo", commandInfo));
-                    menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Jump", "skillthree", commandInfo));
-                    menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Knife Damage", "skillfour", commandInfo));
-                    menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Grenade Damage", "skillfive", commandInfo));
-                    menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}]", (p, option) => SellSkill(p, "Adrenaline", "skillsix", commandInfo));
-                    MenuManager.OpenCenterHtmlMenu(this, player, menu);
-                });
-            }
-        }
-        private async void OnRPGCommand(CCSPlayerController? player, CommandInfo commandInfo)
-        {
-            if (player == null || !player.IsValid || player.IsBot) return;
+                    int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
+                    int healthPoints = await storage.GetPlayerIntAttribute(steamid, "skillone");
+                    int speedPoints = await storage.GetPlayerIntAttribute(steamid, "skilltwo");
+                    int jumpPoints = await storage.GetPlayerIntAttribute(steamid, "skillthree");
+                    int knifeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfour");
+                    int GrenaeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfive");
+                    int adrenalinePoints = await storage.GetPlayerIntAttribute(steamid, "skillsix");
 
-            CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Menu");
-            menu.AddMenuOption("Open Skills menu", (p, option) => {
-                OnSkillsCommand(player, null);
-            });
-            menu.AddMenuOption("Show Skills", (p, option) => {
-                OnShowskillsCommand(player, null);
-            });
-            menu.AddMenuOption("Sell Skills", (p, option) => {
-                OnSellSkillsCommand(player, null);
-            });
 
-            menu.AddMenuOption("Show Stats", (p, option) => {
-                OnShowstatsCommand(player, null);
-            });
-            menu.AddMenuOption("Reset RPG", (p, option) => {
-                var confirmationMenu = new CenterHtmlMenu("Confirmation");
-                confirmationMenu.AddMenuOption("Confirm", (confirmationPlayer, _) => {
                     Server.NextFrame(() =>
                     {
-                        Task.Run(async () =>
-                        {
-                            await storage.ResetUser(confirmationPlayer.SteamID);
+                        CenterHtmlMenu menu = new CenterHtmlMenu($"Skills Menu", this);
+                        menu.Title = $"<font color='lightblue'>Available Credits : <font color='pink'>{availablePoints}<br><font color='yellow'>Upgrade your Skills :<font color='white'><font color='white'>";
+                        if (!Config.DisableHealth) menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}] {healthPoints * Config.UpgradeCostIncreasedHP} credits", (p, option) => UpdateSkill(p, "Health", "skillone", Config.UpgradeCostIncreasedHP, commandInfo), availablePoints < (healthPoints * Config.UpgradeCostIncreasedHP));
+                        if (!Config.DisableSpeed) menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}] {speedPoints * Config.UpgradeCostIncreasedSpeed} credits", (p, option) => UpdateSkill(p, "Speed", "skilltwo", Config.UpgradeCostIncreasedSpeed, commandInfo), availablePoints < (speedPoints * Config.UpgradeCostIncreasedSpeed));
+                        if (!Config.DisableJump) menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}] {jumpPoints * Config.UpgradeCostIncreasedJump} credits", (p, option) => UpdateSkill(p, "Jump", "skillthree", Config.UpgradeCostIncreasedJump, commandInfo), availablePoints < (jumpPoints * Config.UpgradeCostIncreasedJump));
+                        if (!Config.DisableKnifeDamage) menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}] {knifeDmgPoints * Config.UpgradeCostIncreasedKnifeDamage} credits", (p, option) => UpdateSkill(p, "Knife Damage", "skillfour", Config.UpgradeCostIncreasedKnifeDamage, commandInfo), availablePoints < (knifeDmgPoints * Config.UpgradeCostIncreasedKnifeDamage));
+                        if (!Config.DisableGrenadeDamage) menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}] {GrenaeDmgPoints * Config.UpgradeCostIncreasedGrenadeDamage} credits", (p, option) => UpdateSkill(p, "Grenade Damage", "skillfive", Config.UpgradeCostIncreasedGrenadeDamage, commandInfo), availablePoints < (GrenaeDmgPoints * Config.UpgradeCostIncreasedGrenadeDamage));
+                        if (!Config.DisableAdrenaline) menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}] {adrenalinePoints * Config.UpgradeCostIncreasedAdrenaline} credits", (p, option) => UpdateSkill(p, "Adrenaline", "skillsix", Config.UpgradeCostIncreasedAdrenaline, commandInfo), availablePoints < (adrenalinePoints * Config.UpgradeCostIncreasedAdrenaline));
+                        MenuManager.OpenCenterHtmlMenu(this, player, menu);
+                    });
+                }
+            }
+            private async void OnSellSkillsCommand(CCSPlayerController? player, CommandInfo commandInfo)
+            {
+                if (player == null || !player.IsValid || player.IsBot) return;
+                var steamid = player.SteamID;
+                if (storage != null)
+                {
+                    int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
+                    int healthPoints = await storage.GetPlayerIntAttribute(steamid, "skillone");
+                    int speedPoints = await storage.GetPlayerIntAttribute(steamid, "skilltwo");
+                    int jumpPoints = await storage.GetPlayerIntAttribute(steamid, "skillthree");
+                    int knifeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfour");
+                    int GrenaeDmgPoints = await storage.GetPlayerIntAttribute(steamid, "skillfive");
+                    int adrenalinePoints = await storage.GetPlayerIntAttribute(steamid, "skillsix");
 
-                        }).ContinueWith(task =>
+                    Server.NextFrame(() =>
+                    {
+                        CenterHtmlMenu menu = new CenterHtmlMenu($"Sell Skills Menu", this);
+                        menu.Title = $"<font color='lightblue'>Available Credits : <font color='pink'>{availablePoints}<br><font color='yellow'>Sell your Skills :<font color='white'><font color='white'>";
+                        if (!Config.DisableHealth) menu.AddMenuOption($"Health [{healthPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Health", "skillone", Config.UpgradeCostIncreasedHP, commandInfo));
+                        if (!Config.DisableSpeed) menu.AddMenuOption($"Speed [{speedPoints}/{Config.MaxLevelSpeed}]", (p, option) => SellSkill(p, "Speed", "skilltwo", Config.UpgradeCostIncreasedSpeed, commandInfo));
+                        if (!Config.DisableJump) menu.AddMenuOption($"Jump [{jumpPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Jump", "skillthree", Config.UpgradeCostIncreasedJump, commandInfo));
+                        if (!Config.DisableKnifeDamage) menu.AddMenuOption($"Knife Damage [{knifeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Knife Damage", "skillfour", Config.UpgradeCostIncreasedKnifeDamage, commandInfo));
+                        if (!Config.DisableGrenadeDamage) menu.AddMenuOption($"Grenade Damage [{GrenaeDmgPoints}/{Config.MaxLevel}]", (p, option) => SellSkill(p, "Grenade Damage", "skillfive", Config.UpgradeCostIncreasedGrenadeDamage, commandInfo));
+                        if (!Config.DisableAdrenaline) menu.AddMenuOption($"Adrenaline [{adrenalinePoints}/{Config.MaxLevelAdrenaline}]", (p, option) => SellSkill(p, "Adrenaline", "skillsix", Config.UpgradeCostIncreasedAdrenaline, commandInfo));
+                        MenuManager.OpenCenterHtmlMenu(this, player, menu);
+                    });
+                }
+            }
+            private void OnRPGCommand(CCSPlayerController? player, CommandInfo commandInfo)
+            {
+                if (player == null || !player.IsValid || player.IsBot) return;
+
+                CenterHtmlMenu menu = new CenterHtmlMenu($"RPG Menu", this);
+                menu.AddMenuOption("Open Skills menu", (p, option) =>
+                {
+                    OnSkillsCommand(player, null);
+                });
+                menu.AddMenuOption("Show Skills", (p, option) =>
+                {
+                    OnShowskillsCommand(player, null);
+                });
+                menu.AddMenuOption("Sell Skills", (p, option) =>
+                {
+                    OnSellSkillsCommand(player, null);
+                });
+
+                menu.AddMenuOption("Show Stats", (p, option) =>
+                {
+                    OnShowstatsCommand(player, null);
+                });
+                menu.AddMenuOption("Reset RPG", (p, option) =>
+                {
+                    var confirmationMenu = new CenterHtmlMenu("Confirmation", this);
+                    confirmationMenu.AddMenuOption("Confirm", (confirmationPlayer, _) =>
+                    {
+                        Server.NextFrame(() =>
                         {
                             Task.Run(async () =>
                             {
-                                await storage.FirstTimeRegister(confirmationPlayer.SteamID);
+                                await storage.ResetUser(confirmationPlayer.SteamID);
 
                             }).ContinueWith(task =>
                             {
-                                if (task.Exception != null)
+                                Task.Run(async () =>
                                 {
-                                    Console.WriteLine($"Error registering player: {task.Exception}");
-                                    return;
-                                }
-                                var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(confirmationPlayer.SteamID));
-                                taskNext.ContinueWith(task =>
+                                    await storage.FirstTimeRegister(confirmationPlayer.SteamID, confirmationPlayer.PlayerName);
+
+                                }).ContinueWith(task =>
                                 {
-                                    playerSkillsCache[confirmationPlayer.SteamID] = task.Result;
+                                    if (task.Exception != null)
+                                    {
+                                        Console.WriteLine($"Error registering player: {task.Exception}");
+                                        return;
+                                    }
+                                    var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(confirmationPlayer.SteamID));
+                                    taskNext.ContinueWith(task =>
+                                    {
+                                        playerSkillsCache[confirmationPlayer.SteamID] = task.Result;
+                                    });
                                 });
                             });
+                            confirmationPlayer.PrintToChat($" {ChatColors.Green}[Skills] you reset your level.");
+                            MenuManager.CloseActiveMenu(confirmationPlayer);
                         });
-                        confirmationPlayer.PrintToChat($" {ChatColors.Green}[Skills] you reset your level.");
-                        MenuManager.CloseActiveMenu(confirmationPlayer);
                     });
+
+                    MenuManager.OpenCenterHtmlMenu(this, player, confirmationMenu);
                 });
 
-                MenuManager.OpenCenterHtmlMenu(this, player, confirmationMenu);
-            });
-
-            MenuManager.OpenCenterHtmlMenu(this, player, menu);
-        }
-
-
-        private HookResult OnPlayerConnectFull(EventPlayerConnectFull @event, GameEventInfo info)
-        {
-            var player = @event.Userid;
-            if (player != null && player.IsValid && !player.IsBot)
-            {
-                connectedUser(player);
-            }
-            return HookResult.Continue;
-        }
-
-        private void connectedUser(CCSPlayerController player)
-        {
-            bUsingAdrenaline.Add(player.UserId, null);
-            jumping.Add(player.UserId, null);
-            ulong steamID64 = player.SteamID;
-
-            if (storage == null)
-            {
-
-                Console.WriteLine("Storage has not been initialized.");
-                Console.WriteLine("Storage has not been initialized.");
-                return;
+                MenuManager.OpenCenterHtmlMenu(this, player, menu);
             }
 
-            Server.NextFrame(() =>
-            {
-                Task.Run(async () =>
-                {
-                    await storage.FirstTimeRegister(steamID64);
 
-                }).ContinueWith(task =>
+            private HookResult OnPlayerConnectFull(EventPlayerConnectFull @event, GameEventInfo info)
+            {
+                var player = @event.Userid;
+                if (player != null && player.IsValid && !player.IsBot)
                 {
-                    if (task.Exception != null)
+                    connectedUser(player);
+                }
+                return HookResult.Continue;
+            }
+
+            private void connectedUser(CCSPlayerController player)
+            {
+                bUsingAdrenaline.Add(player.UserId, null);
+                jumping.Add(player.UserId, null);
+                ulong steamID64 = player.SteamID;
+                var name = player.PlayerName;
+
+                if (storage == null)
+                {
+
+                    Console.WriteLine("Storage has not been initialized.");
+                    Console.WriteLine("Storage has not been initialized.");
+                    return;
+                }
+
+                Server.NextFrame(() =>
+                {
+                    Task.Run(async () =>
                     {
-                        Console.WriteLine($"Error registering player: {task.Exception}");
-                        return;
+                        await storage.FirstTimeRegister(steamID64, name);
+
+                    }).ContinueWith(task =>
+                    {
+                        if (task.Exception != null)
+                        {
+                            Console.WriteLine($"Error registering player: {task.Exception}");
+                            return;
+                        }
+                        var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamID64));
+                        taskNext.ContinueWith(task =>
+                        {
+                            playerSkillsCache[steamID64] = task.Result;
+                        });
+                    });
+                });
+            }
+            private HookResult OnPlayerConnectDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
+            {
+                var player = @event.Userid;
+                if (player != null && player.IsValid && !player.IsBot)
+                {
+                    if (bUsingAdrenaline.ContainsKey(player.UserId))
+                    {
+                        bUsingAdrenaline.Remove(player.UserId);
                     }
-                    var taskNext = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamID64));
-                    taskNext.ContinueWith(task =>
+
+                    if (jumping.ContainsKey(player.UserId))
                     {
-                        playerSkillsCache[steamID64] = task.Result;
-                    });
-                });
-            });
-        }
-        private HookResult OnPlayerConnectDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
-        {
-            var player = @event.Userid;
-            if (player != null && player.IsValid && !player.IsBot)
+                        jumping.Remove(player.UserId);
+                    }
+                }
+                return HookResult.Continue;
+            }
+
+            private async void SellSkill(CCSPlayerController player, string skillName, string columnName, int cost, CommandInfo commandInfo)
             {
-                if (bUsingAdrenaline.ContainsKey(player.UserId))
+                var steamid = player.SteamID;
+
+                if (!playerSkillsDictionary.TryGetValue(steamid, out PlayerSkills? playerSkills))
                 {
-                    bUsingAdrenaline.Remove(player.UserId);
+                    playerSkills = await LoadPlayerSkillsFromDatabase(steamid);
+                    playerSkillsDictionary[steamid] = playerSkills;
                 }
 
-                if (jumping.ContainsKey(player.UserId))
+                if (storage != null)
                 {
-                    jumping.Remove(player.UserId);
-                }
-            }
-            return HookResult.Continue;
-        }
+                    int currentPoints = await storage.GetPlayerIntAttribute(steamid, columnName);
 
-        private async void SellSkill(CCSPlayerController player, string skillName, string columnName, CommandInfo commandInfo)
-        {
-            var steamid = player.SteamID;
-
-            if (!playerSkillsDictionary.TryGetValue(steamid, out PlayerSkills? playerSkills))
-            {
-                playerSkills = await LoadPlayerSkillsFromDatabase(steamid);
-                playerSkillsDictionary[steamid] = playerSkills;
-            }
-
-            if (storage != null)
-            {
-                int currentPoints = await storage.GetPlayerIntAttribute(steamid, columnName);
-
-                if (currentPoints > 0)
-                {
-                    // Refund points
-                    await storage.UpdateDb(steamid, columnName, -1);
-                    await storage.UpdateDb(steamid, "skillavailable", 1);
-                    OnSellSkillsCommand(player, commandInfo);
-
-                    Server.NextFrame(() =>
+                    if (currentPoints > 0)
                     {
-                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You sold your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}and got back one skill point.");
-
-                        // Update dictionary
-                        var task = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamid));
-                        task.Wait();
-                        playerSkillsCache[steamid] = task.Result;
-                    });
-                }
-                else
-                {
-                    Server.NextFrame(() =>
-                    {
-                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}Your skill {ChatColors.Lime}{skillName} {ChatColors.Gold}is already at minimum level.");
-                    });
-                }
-            }
-        }
-
-        private int GetMaxLevel(string columnName)
-        {
-            switch (columnName)
-            {
-                case "skilltwo":
-                    return Config.MaxLevelSpeed;
-                case "skillsix":
-                    return Config.MaxLevelAdrenaline;
-                default:
-                    return Config.MaxLevel;
-            }
-        }
-
-        private async void UpdateSkill(CCSPlayerController player, string skillName, string columnName, CommandInfo commandInfo)
-        {
-            var steamid = player.SteamID;
-
-            if (!playerSkillsDictionary.TryGetValue(steamid, out PlayerSkills? playerSkills))
-            {
-                playerSkills = await LoadPlayerSkillsFromDatabase(steamid);
-                playerSkillsDictionary[steamid] = playerSkills;
-            }
-
-            if (storage != null)
-            {
-                int currentPoints = await storage.GetPlayerIntAttribute(steamid, columnName);
-                int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
-
-                if (availablePoints > 0)
-                {
-                    if (currentPoints < GetMaxLevel(columnName))
-                    {
-                        //updating values in db
-                        await storage.UpdateDb(steamid, columnName, 1);
-                        await storage.UpdateDb(steamid, "skillavailable", -1);
-                        OnSkillsCommand(player, commandInfo);
+                        // Refund points
+                        var price = currentPoints * cost;
+                        await storage.UpdateDb(steamid, columnName, -1);
+                        await storage.UpdateDb(steamid, "skillavailable", price);
+                        OnSellSkillsCommand(player, commandInfo);
 
                         Server.NextFrame(() =>
                         {
-                            player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You upgraded your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}to {ChatColors.Lime}{currentPoints + 1}/{GetMaxLevel(columnName)}.");
+                            player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You sold your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}and got back {price} credits.");
 
-                            //updating values in dictionary
+                            // Update dictionary
                             var task = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamid));
                             task.Wait();
                             playerSkillsCache[steamid] = task.Result;
@@ -1100,413 +1105,450 @@ namespace RPG
                     {
                         Server.NextFrame(() =>
                         {
-                            player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}Your skill {ChatColors.Lime}{skillName} {ChatColors.Gold}is already at maximum level.");
+                            player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}Your skill {ChatColors.Lime}{skillName} {ChatColors.Gold}is already at minimum level.");
                         });
                     }
                 }
-                if (availablePoints == 0)
-                {
-                    Server.NextFrame(() =>
-                    {
-                        player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You do not have any available skill points to use.");
-                    });
-                }
             }
-        } // updates dictionary too
-        public int GetSkillPointsFromDictionary(CCSPlayerController player, string skillName)
-        {
-            var steamid = player.SteamID;
-            if (playerSkillsCache.ContainsKey(steamid) && playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
+
+            private int GetMaxLevel(string columnName)
             {
-                switch (skillName.ToLower())
+                switch (columnName)
                 {
-                    case "skill1points":
-                        return playerSkills.Skill1Points;
-                    case "skill2points":
-                        return playerSkills.Skill2Points;
-                    case "skill3points":
-                        return playerSkills.Skill3Points;
-                    case "skill4points":
-                        return playerSkills.Skill4Points;
-                    case "skill5points":
-                        return playerSkills.Skill5Points;
-                    case "skill6points":
-                        return playerSkills.Skill6Points;
+                    case "skilltwo":
+                        return Config.MaxLevelSpeed;
+                    case "skillsix":
+                        return Config.MaxLevelAdrenaline;
                     default:
-                        Console.WriteLine($"Invalid skill name provided: {skillName}");
-                        return 0;
+                        return Config.MaxLevel;
                 }
             }
-            else
+
+            private async void UpdateSkill(CCSPlayerController player, string skillName, string columnName, int cost, CommandInfo commandInfo)
             {
-                Console.WriteLine($"Skill points for player {steamid} not found in cache.");
-                return 0;
-            }
-        } // gets skill from dictionary to avoid multiple database connection & disconnection on tick
-        private HookResult OnPlayerHurtMultiplier(EventPlayerHurt @event, GameEventInfo info)
-        {
-            var attacker = @event.Attacker;
-            var victim = @event.Userid;
+                var steamid = player.SteamID;
 
-            if (!IsPlayerValid(attacker) || !IsPlayerValid(victim) || victim.UserId == attacker.UserId)
-                return HookResult.Continue;
-
-            if (Config.AdrenalineOnlyOnHit)
-                applyAdrenaline(attacker);
-
-            if (@event.Weapon == "hegrenade")
-            {
-                var grenadeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill5points");
-                var normaldmg = @event.DmgHealth;
-                var newdmg = Math.Pow(normaldmg * grenadeDmgPoints / 15, 2);
-                var newdmgfinal = newdmg;
-                if (grenadeDmgPoints <= 5 && grenadeDmgPoints >= 1)
+                if (!playerSkillsDictionary.TryGetValue(steamid, out PlayerSkills? playerSkills))
                 {
-                    newdmgfinal = Math.Min(newdmg, 600 - normaldmg + normaldmg / grenadeDmgPoints);
-                }
-                if (grenadeDmgPoints >= 6 && grenadeDmgPoints <= 8)
-                {
-                    newdmgfinal = Math.Min(newdmg, 900 - normaldmg + normaldmg / grenadeDmgPoints);
-                }
-                if (grenadeDmgPoints == 9)
-                {
-                    newdmgfinal = Math.Min(newdmg, 1050 - normaldmg + normaldmg / grenadeDmgPoints);
-                }
-                var dmgg = (int)newdmgfinal;
-                victim.Pawn.Value.Health -= dmgg;
-            }
-            else if (@event.Weapon == "knife")
-            {
-                var knifeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill4points");
-                var normaldmg = @event.DmgHealth;
-                var newdmg = normaldmg;
-                if (normaldmg <= 50)
-                {
-                    newdmg += knifeDmgPoints * 10;
-                }
-                if (normaldmg > 50)
-                {
-                    newdmg += knifeDmgPoints * 15;
-                }
-                victim.Pawn.Value.Health -= newdmg - normaldmg;
-            }
-            return HookResult.Continue;
-        } // applies skills points on grenade & knife dmg
-
-        private HookResult OnPlayerJumpPre(EventPlayerJump @event, GameEventInfo info)
-        {
-            var jumper = @event.Userid;
-            var jumperPawn = jumper.PlayerPawn.Value;
-            if (jumper == null || jumper.Pawn == null || jumper.Pawn.Value == null || jumper.IsBot || jumperPawn == null)
-            {
-                return HookResult.Continue;
-            }
-            var jumpPoints = GetSkillPointsFromDictionary(jumper, "skill3points");
-
-            if (jumpPoints >= 1)
-            {
-                SetPlayerSpeed(jumperPawn, 1.0f);
-
-                if (jumping[jumper.UserId] != null) jumping[jumper.UserId]?.Kill();
-
-                jumping[jumper.UserId] = AddTimer(Config.JumpDuration, () =>
-                {
-                    jumping[jumper.UserId] = null;
-
-                });
-            }
-            return HookResult.Continue;
-        }
-
-        private HookResult OnPlayerJump(EventPlayerJump @event, GameEventInfo info)
-        {
-            var jumper = @event.Userid;
-            var jumperPawn = jumper.PlayerPawn.Value;
-            if (jumper == null || jumper.Pawn == null || jumper.Pawn.Value == null || jumper.IsBot || jumperPawn == null)
-            {
-                return HookResult.Continue;
-            }
-            var jumpPoints = GetSkillPointsFromDictionary(jumper, "skill3points");
-
-            if (jumpPoints >= 1)
-            {
-                SetPlayerSpeed(jumperPawn, 1.0f);
-                AddTimer(Config.ApplyJumpTimer, () =>
-                {
-                    SetPlayerSpeed(jumperPawn, 1.0f);
-
-                    var increase = Config.JumpIncreasePerLevel * jumpPoints + 1.0;
-
-                    jumperPawn.AbsVelocity.X *= (float)increase;
-                    jumperPawn.AbsVelocity.Y *= (float)increase;
-                    //jumperPawn.AbsVelocity.Z *= (float)increase;
-                });
-            }
-            return HookResult.Continue;
-        }
-
-        private HookResult eventPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
-        {
-            var player = @event.Userid;
-            if (!IsPlayerValid(player))
-            {
-                return HookResult.Continue;
-            }
-
-            if (Config.TimeForApplyHP == 0)
-            {
-                Server.NextFrame(() =>
-                {
-                    if (!IsPlayerValid(player))
-                    {
-                        return;
-                    }
-                    var playerPawn = player.PlayerPawn.Value;
-
-                    if (playerPawn == null) return;
-
-                    var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
-
-                    if (hpPoints >= 1)
-                    {
-                        var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
-
-                        playerPawn.Health = newHP;
-                        playerPawn.MaxHealth = newHP;
-
-                        Utilities.SetStateChanged(playerPawn, "CBaseEntity", "m_iHealth");
-                    }
-
-                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
-
-                    if (speedPoints >= 1)
-                    {
-                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
-                    }
-                });
-            } 
-            else
-            {
-                AddTimer(Config.TimeForApplyHP * 1.0f, () =>
-                {
-                    if (!IsPlayerValid(player))
-                    {
-                        return;
-                    }
-                    var playerPawn = player.PlayerPawn.Value;
-
-                    if (playerPawn == null) return;
-
-                    var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
-
-                    if (hpPoints >= 1)
-                    {
-                        var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
-
-                        playerPawn.Health = newHP;
-                        playerPawn.MaxHealth = newHP;
-
-                        Utilities.SetStateChanged(playerPawn, "CBaseEntity", "m_iHealth");
-                    }
-
-                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
-
-                    if (speedPoints >= 1)
-                    {
-                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
-                    }
-                });
-            }
-
-            return HookResult.Continue;
-        }
-
-        private void applyAdrenaline(CCSPlayerController player)
-        {
-            var playerPawn = player.PlayerPawn.Value;
-
-            if (playerPawn == null) return;
-
-            if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] != null) return;
-
-            var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
-
-            if (adrenalinePoints >= 1)
-            {
-                var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
-                if (speedPoints >= 1)
-                {
-                    SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
-                }
-                else
-                {
-                    SetPlayerSpeed(playerPawn, 1.0f + adrenalinePoints * Config.AdrenalineIncreasePerLevel);
+                    playerSkills = await LoadPlayerSkillsFromDatabase(steamid);
+                    playerSkillsDictionary[steamid] = playerSkills;
                 }
 
-                if (bUsingAdrenaline[player.UserId] != null) bUsingAdrenaline[player.UserId]?.Kill();
-
-                bUsingAdrenaline[player.UserId] = AddTimer(Config.AdrenalineDuration, () =>
+                if (storage != null)
                 {
-                    bUsingAdrenaline[player.UserId] = null;
+                    int currentPoints = await storage.GetPlayerIntAttribute(steamid, columnName);
+                    int availablePoints = await storage.GetPlayerIntAttribute(steamid, "skillavailable");
 
-                    if (!IsPlayerValid(player))
+                    if (availablePoints >= currentPoints * cost)
                     {
-                        return;
-                    }
-                    if (playerPawn == null || !playerPawn.IsValid) return;
+                        if (currentPoints < GetMaxLevel(columnName))
+                        {
+                            //updating values in db
+                            await storage.UpdateDb(steamid, columnName, 1);
+                            await storage.UpdateDb(steamid, "skillavailable", -(currentPoints * cost));
+                            OnSkillsCommand(player, commandInfo);
 
-                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+                            Server.NextFrame(() =>
+                            {
+                                player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You upgraded your {ChatColors.Lime}{skillName} Skill {ChatColors.Gold}to {ChatColors.Lime}{currentPoints + 1}/{GetMaxLevel(columnName)}.");
 
-                    if (speedPoints >= 1)
-                    {
-                        SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                                //updating values in dictionary
+                                var task = Task.Run(async () => await LoadPlayerSkillsFromDatabase(steamid));
+                                task.Wait();
+                                playerSkillsCache[steamid] = task.Result;
+                            });
+                        }
+                        else
+                        {
+                            Server.NextFrame(() =>
+                            {
+                                player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}Your skill {ChatColors.Lime}{skillName} {ChatColors.Gold}is already at maximum level.");
+                            });
+                        }
                     }
                     else
                     {
-                        SetPlayerSpeed(playerPawn, 1.0f);
+                        Server.NextFrame(() =>
+                        {
+                            player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}You do not have enought credits to use.");
+                        });
                     }
+                }
+            } // updates dictionary too
+            public int GetSkillPointsFromDictionary(CCSPlayerController player, string skillName)
+            {
+                var steamid = player.SteamID;
+                if (playerSkillsCache.ContainsKey(steamid) && playerSkillsCache.TryGetValue(steamid, out PlayerSkills? playerSkills))
+                {
+                    switch (skillName.ToLower())
+                    {
+                        case "skill1points":
+                            return playerSkills.Skill1Points;
+                        case "skill2points":
+                            return playerSkills.Skill2Points;
+                        case "skill3points":
+                            return playerSkills.Skill3Points;
+                        case "skill4points":
+                            return playerSkills.Skill4Points;
+                        case "skill5points":
+                            return playerSkills.Skill5Points;
+                        case "skill6points":
+                            return playerSkills.Skill6Points;
+                        default:
+                            Console.WriteLine($"Invalid skill name provided: {skillName}");
+                            return 0;
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"Skill points for player {steamid} not found in cache.");
+                    return 0;
+                }
+            } // gets skill from dictionary to avoid multiple database connection & disconnection on tick
+            private HookResult OnPlayerHurtMultiplier(EventPlayerHurt @event, GameEventInfo info)
+            {
+                var attacker = @event.Attacker;
+                var victim = @event.Userid;
+
+                if (!IsPlayerValid(attacker) || !IsPlayerValid(victim) || victim.UserId == attacker.UserId)
+                    return HookResult.Continue;
+
+                if (Config.AdrenalineOnlyOnHit)
+                    applyAdrenaline(attacker);
+
+                if (!Config.DisableGrenadeDamage && @event.Weapon == "hegrenade")
+                {
+                    var grenadeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill5points");
+                    var normaldmg = @event.DmgHealth;
+                    var newdmg = Math.Pow(normaldmg * grenadeDmgPoints / 15, 2);
+                    var newdmgfinal = newdmg;
+                    if (grenadeDmgPoints <= 5 && grenadeDmgPoints >= 1)
+                    {
+                        newdmgfinal = Math.Min(newdmg, 600 - normaldmg + normaldmg / grenadeDmgPoints);
+                    }
+                    if (grenadeDmgPoints >= 6 && grenadeDmgPoints <= 8)
+                    {
+                        newdmgfinal = Math.Min(newdmg, 900 - normaldmg + normaldmg / grenadeDmgPoints);
+                    }
+                    if (grenadeDmgPoints == 9)
+                    {
+                        newdmgfinal = Math.Min(newdmg, 1050 - normaldmg + normaldmg / grenadeDmgPoints);
+                    }
+                    var dmgg = (int)newdmgfinal;
+                    victim.Pawn.Value.Health -= dmgg;
+                }
+                else if (!Config.DisableKnifeDamage && @event.Weapon == "knife")
+                {
+                    var knifeDmgPoints = GetSkillPointsFromDictionary(attacker, "skill4points");
+                    var normaldmg = @event.DmgHealth;
+                    var newdmg = normaldmg;
+                    if (normaldmg <= 50)
+                    {
+                        newdmg += knifeDmgPoints * 10;
+                    }
+                    if (normaldmg > 50)
+                    {
+                        newdmg += knifeDmgPoints * 15;
+                    }
+                    victim.Pawn.Value.Health -= newdmg - normaldmg;
+                }
+                return HookResult.Continue;
+            } // applies skills points on grenade & knife dmg
+
+            private HookResult OnPlayerJumpPre(EventPlayerJump @event, GameEventInfo info)
+            {
+                var jumper = @event.Userid;
+                var jumperPawn = jumper.PlayerPawn.Value;
+                if (jumper == null || jumper.Pawn == null || jumper.Pawn.Value == null || jumper.IsBot || jumperPawn == null)
+                {
+                    return HookResult.Continue;
+                }
+                var jumpPoints = GetSkillPointsFromDictionary(jumper, "skill3points");
+
+                if (jumpPoints >= 1 && !Config.DisableJump)
+                {
+                    SetPlayerSpeed(jumperPawn, 1.0f);
+
+                    if (jumping[jumper.UserId] != null) jumping[jumper.UserId]?.Kill();
+
+                    jumping[jumper.UserId] = AddTimer(Config.JumpDuration, () =>
+                    {
+                        jumping[jumper.UserId] = null;
+
+                    });
+                }
+                return HookResult.Continue;
+            }
+
+            private HookResult OnPlayerJump(EventPlayerJump @event, GameEventInfo info)
+            {
+                var jumper = @event.Userid;
+                var jumperPawn = jumper.PlayerPawn.Value;
+                if (jumper == null || jumper.Pawn == null || jumper.Pawn.Value == null || jumper.IsBot || jumperPawn == null)
+                {
+                    return HookResult.Continue;
+                }
+                var jumpPoints = GetSkillPointsFromDictionary(jumper, "skill3points");
+
+                if (jumpPoints >= 1 && !Config.DisableJump)
+                {
+                    SetPlayerSpeed(jumperPawn, 1.0f);
+                    AddTimer(Config.ApplyJumpTimer, () =>
+                    {
+                        SetPlayerSpeed(jumperPawn, 1.0f);
+
+                        var increase = Config.JumpIncreasePerLevel * jumpPoints + 1.0;
+
+                        jumperPawn.AbsVelocity.X *= (float)increase;
+                        jumperPawn.AbsVelocity.Y *= (float)increase;
+                        //jumperPawn.AbsVelocity.Z *= (float)increase;
+                    });
+                }
+                return HookResult.Continue;
+            }
+
+            private HookResult eventPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
+            {
+                var player = @event.Userid;
+                if (!IsPlayerValid(player))
+                {
+                    return HookResult.Continue;
+                }
+
+                if (Config.TimeForApplyHP == 0)
+                {
+                    Server.NextFrame(() =>
+                    {
+                        if (!IsPlayerValid(player))
+                        {
+                            return;
+                        }
+                        var playerPawn = player.PlayerPawn.Value;
+
+                        if (playerPawn == null) return;
+
+                        var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
+
+                        if (hpPoints >= 1 && !Config.DisableHealth)
+                        {
+                            var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
+
+                            playerPawn.Health = newHP;
+                            playerPawn.MaxHealth = newHP;
+
+                            Utilities.SetStateChanged(playerPawn, "CBaseEntity", "m_iHealth");
+                        }
+
+                        var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                        if (speedPoints >= 1 && !Config.DisableSpeed)
+                        {
+                            SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                        }
+                    });
+                }
+                else
+                {
+                    AddTimer(Config.TimeForApplyHP * 1.0f, () =>
+                    {
+                        if (!IsPlayerValid(player))
+                        {
+                            return;
+                        }
+                        var playerPawn = player.PlayerPawn.Value;
+
+                        if (playerPawn == null) return;
+
+                        var hpPoints = GetSkillPointsFromDictionary(player, "skill1points");
+
+                        if (hpPoints >= 1 && !Config.DisableHealth)
+                        {
+                            var newHP = playerPawn.Health + (Config.HPIncreasePerLevel * hpPoints);
+
+                            playerPawn.Health = newHP;
+                            playerPawn.MaxHealth = newHP;
+
+                            Utilities.SetStateChanged(playerPawn, "CBaseEntity", "m_iHealth");
+                        }
+
+                        var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                        if (speedPoints >= 1 && !Config.DisableSpeed)
+                        {
+                            SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                        }
+                    });
+                }
+
+                return HookResult.Continue;
+            }
+
+            private void applyAdrenaline(CCSPlayerController player)
+            {
+                var playerPawn = player.PlayerPawn.Value;
+
+                if (playerPawn == null) return;
+
+                if (jumping.ContainsKey(player.UserId) && jumping[player.UserId] != null) return;
+
+                var adrenalinePoints = GetSkillPointsFromDictionary(player, "skill6points");
+
+                if (adrenalinePoints >= 1 && !Config.DisableAdrenaline)
+                {
+                    var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+                    if (speedPoints >= 1)
+                    {
+                        SetPlayerSpeed(playerPawn, 1.0f + (speedPoints * Config.SpeedIncreasePerLevel + adrenalinePoints * Config.AdrenalineIncreasePerLevel));
+                    }
+                    else
+                    {
+                        SetPlayerSpeed(playerPawn, 1.0f + adrenalinePoints * Config.AdrenalineIncreasePerLevel);
+                    }
+
+                    if (bUsingAdrenaline[player.UserId] != null) bUsingAdrenaline[player.UserId]?.Kill();
+
+                    bUsingAdrenaline[player.UserId] = AddTimer(Config.AdrenalineDuration, () =>
+                    {
+                        bUsingAdrenaline[player.UserId] = null;
+
+                        if (!IsPlayerValid(player))
+                        {
+                            return;
+                        }
+                        if (playerPawn == null || !playerPawn.IsValid) return;
+
+                        var speedPoints = GetSkillPointsFromDictionary(player, "skill2points");
+
+                        if (speedPoints >= 1)
+                        {
+                            SetPlayerSpeed(playerPawn, 1.0f + speedPoints * Config.SpeedIncreasePerLevel);
+                        }
+                        else
+                        {
+                            SetPlayerSpeed(playerPawn, 1.0f);
+                        }
+                    });
+                }
+            }
+            ///// ################### SKILLS END ################### /////
+            ///
+            ///// ################### COMMANDS ################### /////
+            [ConsoleCommand("css_givexp")]
+            [RequiresPermissions("@css/slay")]
+            [CommandHelper(minArgs: 1, usage: "<#userid or name> <xp>", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+            public void OnGiveXpCommand(CCSPlayerController? caller, CommandInfo command)
+            {
+                string callerName = caller == null ? "Console" : caller.PlayerName;
+                int value = 0;
+                int.TryParse(command.GetArg(2), out value);
+
+                TargetResult? targets = GetTarget(command);
+                if (targets == null) return;
+
+                List<CCSPlayerController> playersToTarget = targets!.Players.Where(player => player != null && player.IsValid && !player.IsHLTV).ToList();
+
+                playersToTarget.ForEach(player =>
+                {
+                    if (!player.IsBot && player.SteamID.ToString().Length != 17)
+                        return;
+
+                    var steamid = player.SteamID;
+                    storage?.UpdateDb(steamid, "points", value);
+                    storage?.UpdateDb(steamid, "pointscalc", value);
+                    player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}you received {value} exp by {callerName}");
+                    RankUpPlayerOrNo(player);
                 });
             }
-        }
-        ///// ################### SKILLS END ################### /////
-        ///
-        ///// ################### COMMANDS ################### /////
-        [ConsoleCommand("css_givexp")]
-        [RequiresPermissions("@css/slay")]
-        [CommandHelper(minArgs: 1, usage: "<#userid or name> <xp>", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-        public void OnGiveXpCommand(CCSPlayerController? caller, CommandInfo command)
-        {
-            string callerName = caller == null ? "Console" : caller.PlayerName;
-            int value = 0;
-            int.TryParse(command.GetArg(2), out value);
 
-            TargetResult? targets = GetTarget(command);
-            if (targets == null) return;
-
-            List<CCSPlayerController> playersToTarget = targets!.Players.Where(player => player != null && player.IsValid && !player.IsHLTV).ToList();
-
-            playersToTarget.ForEach(player =>
+            [ConsoleCommand("css_givelevel")]
+            [RequiresPermissions("@css/slay")]
+            [CommandHelper(minArgs: 1, usage: "<#userid or name> <level>", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+            public void OnGiveLevelCommand(CCSPlayerController? caller, CommandInfo command)
             {
-                if (!player.IsBot && player.SteamID.ToString().Length != 17)
-                    return;
+                string callerName = caller == null ? "Console" : caller.PlayerName;
+                int value = 0;
+                int.TryParse(command.GetArg(2), out value);
 
-                var steamid = player.SteamID;
-                storage?.UpdateDb(steamid, "points", value);
-                storage?.UpdateDb(steamid, "pointscalc", value);
-                player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}you received {value} exp by {callerName}");
-                RankUpPlayerOrNo(player);
-            });
-        }
+                TargetResult? targets = GetTarget(command);
+                if (targets == null) return;
 
-        [ConsoleCommand("css_givelevel")]
-        [RequiresPermissions("@css/slay")]
-        [CommandHelper(minArgs: 1, usage: "<#userid or name> <level>", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-        public void OnGiveLevelCommand(CCSPlayerController? caller, CommandInfo command)
-        {
-            string callerName = caller == null ? "Console" : caller.PlayerName;
-            int value = 0;
-            int.TryParse(command.GetArg(2), out value);
+                List<CCSPlayerController> playersToTarget = targets!.Players.Where(player => player != null && player.IsValid && !player.IsHLTV).ToList();
 
-            TargetResult? targets = GetTarget(command);
-            if (targets == null) return;
+                playersToTarget.ForEach(player =>
+                {
+                    if (!player.IsBot && player.SteamID.ToString().Length != 17)
+                        return;
 
-            List<CCSPlayerController> playersToTarget = targets!.Players.Where(player => player != null && player.IsValid && !player.IsHLTV).ToList();
+                    var steamid = player.SteamID;
 
-            playersToTarget.ForEach(player =>
-            {
-                if (!player.IsBot && player.SteamID.ToString().Length != 17)
-                    return;
+                    storage?.UpdateDb(steamid, "level", value);
+                    storage?.UpdateDb(steamid, "skillavailable", value);
+                    storage?.SetDb(steamid, "pointscalc", 0);
 
-                var steamid = player.SteamID;
-
-                storage?.UpdateDb(steamid, "level", value);
-                storage?.UpdateDb(steamid, "skillavailable", value);
-                storage?.SetDb(steamid, "pointscalc", 0);
-
-                player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}you received {value} levels by {callerName}");
-            });
-        }
-
-
-        ///// ################### COMMANDS END ################### /////
-        ///// ################### UTILS ################### /////
-
-        private bool IsCT(CCSPlayerController player)
-        {
-            return player.TeamNum == 3;
-        }
-        private bool IsT(CCSPlayerController player)
-        {
-            return player.TeamNum == 2;
-        }
-
-        private HookResult OnPlayerDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
-        {
-            if (@event.Userid != null && @event.Userid.IsValid)
-            {
-                ulong steamid = @event.Userid.SteamID;
-
-                // Remove player data from both dictionaries
-                playerSkillsCache.Remove(steamid);
-                playerSkillsDictionary.Remove(steamid);
+                    player.PrintToChat($" {ChatColors.Green}[Skills] {ChatColors.Gold}you received {value} levels by {callerName}");
+                });
             }
-            return HookResult.Continue;
-        }
 
-        private bool IsPlayerValid(CCSPlayerController? player)
-        {
-            return (player != null && player.IsValid && !player.IsBot && !player.IsHLTV && player.PawnIsAlive);
-        }
 
-        public void SetPlayerSpeed(CCSPlayerPawn? pawn, float speed)
-        {
-            if (pawn == null || !pawn.IsValid) return;
-            //pawn.VelocityModifier = speed;
-            //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
+            ///// ################### COMMANDS END ################### /////
+            ///// ################### UTILS ################### /////
 
-            //Console.WriteLine("Valor es " + speed);
-
-            pawn.VelocityModifier = speed;
-            pawn.GravityScale = speed;
-            Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flVelocityModifier");
-            //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flGravityScale");
-        }
-
-        private static TargetResult? GetTarget(CommandInfo command)
-        {
-            TargetResult matches = command.GetArgTargetResult(1);
-
-            if (!matches.Any())
+            private bool IsCT(CCSPlayerController player)
             {
-                command.ReplyToCommand($"Target {command.GetArg(1)} not found.");
+                return player.TeamNum == 3;
+            }
+            private bool IsT(CCSPlayerController player)
+            {
+                return player.TeamNum == 2;
+            }
+
+            private HookResult OnPlayerDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
+            {
+                if (@event.Userid != null && @event.Userid.IsValid)
+                {
+                    ulong steamid = @event.Userid.SteamID;
+
+                    // Remove player data from both dictionaries
+                    playerSkillsCache.Remove(steamid);
+                    playerSkillsDictionary.Remove(steamid);
+                }
+                return HookResult.Continue;
+            }
+
+            private bool IsPlayerValid(CCSPlayerController? player)
+            {
+                return (player != null && player.IsValid && !player.IsBot && !player.IsHLTV && player.PawnIsAlive);
+            }
+
+            public void SetPlayerSpeed(CCSPlayerPawn? pawn, float speed)
+            {
+                if (pawn == null || !pawn.IsValid) return;
+
+                pawn.VelocityModifier = speed;
+                pawn.GravityScale = speed;
+                Utilities.SetStateChanged(pawn, "CCSPlayerPawn", "m_flVelocityModifier");
+                //Utilities.SetStateChanged(pawn, "CCSPlayerPawnBase", "m_flGravityScale");
+            }
+
+            private static TargetResult? GetTarget(CommandInfo command)
+            {
+                TargetResult matches = command.GetArgTargetResult(1);
+
+                if (!matches.Any())
+                {
+                    command.ReplyToCommand($"Target {command.GetArg(1)} not found.");
+                    return null;
+                }
+
+                if (command.GetArg(1).StartsWith('@'))
+                    return matches;
+
+                if (matches.Count() == 1)
+                    return matches;
+
+                command.ReplyToCommand($"Multiple targets found for \"{command.GetArg(1)}\".");
                 return null;
             }
-
-            if (command.GetArg(1).StartsWith('@'))
-                return matches;
-
-            if (matches.Count() == 1)
-                return matches;
-
-            command.ReplyToCommand($"Multiple targets found for \"{command.GetArg(1)}\".");
-            return null;
         }
-    }
-}
-
-public struct WeaponSpeedStats
-{
-    public double Running { get; }
-    public double Walking { get; }
-
-    public WeaponSpeedStats(double running, double walking)
-    {
-        Running = running;
-        Walking = walking;
-    }
-
-    public double GetSpeed(bool isWalking)
-    {
-        return isWalking ? Walking : Running;
     }
 }
